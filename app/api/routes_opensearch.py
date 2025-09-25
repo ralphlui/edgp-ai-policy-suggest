@@ -5,7 +5,7 @@ import logging
 
 from app.aoss.column_store import OpenSearchColumnStore, ColumnDoc
 from app.tools.embeddings import embed_text
-from app.main import STORES
+from app.core.state import STORES   # import from state, not from main
 from app.utils.validators import validate_domain_name
 
 logger = logging.getLogger(__name__)

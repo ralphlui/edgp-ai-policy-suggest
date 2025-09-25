@@ -1,4 +1,3 @@
-# app/aoss/column_store.py
 from typing import List, Dict, Any, Optional, Iterable
 from dataclasses import dataclass
 from opensearchpy import OpenSearch, helpers

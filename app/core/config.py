@@ -107,6 +107,9 @@ class Settings(BaseSettings):
 
         if not self.rule_microservice_url:
             raise ValueError("RULE_MICROSERVICE_URL is required")
+            
+        if not self.aoss_host:
+            raise ValueError("AOSS_HOST is required")
 
         # PROD hardening
         env_norm = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or self.app_env).lower()

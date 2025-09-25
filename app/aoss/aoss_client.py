@@ -1,9 +1,9 @@
-# app/aoss/aoss_client.py
 from typing import Optional
 import os
 import boto3
 from opensearchpy import OpenSearch
 from requests_aws4auth import AWS4Auth
+import multiprocessing
 
 from app.core.config import settings  # your singleton
 
@@ -33,7 +33,16 @@ def create_aoss_client(timeout_sec: int = 10) -> OpenSearch:
     """
     if not settings.aoss_host or not settings.aws_region:
         raise RuntimeError("Missing AOSS host or region in settings.")
-    auth = _resolve_auth(settings.aws_region)
+    
+    # Handle multiprocessing context issues
+    try:
+        auth = _resolve_auth(settings.aws_region)
+    except Exception as e:
+        # If there's an issue with multiprocessing, log and re-raise
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to resolve AWS auth: {e}")
+        raise
 
     return OpenSearch(
         hosts=[{"host": settings.aoss_host, "port": 443}],
