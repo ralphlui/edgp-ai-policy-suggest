@@ -57,7 +57,7 @@ def test_connection() -> dict:
     client = create_aoss_client()
     try:
         info = client.info()
-        logger.info(" OpenSearch connection successful.")
+        logger.info("✅ OpenSearch connection successful.")
         return info
     except Exception as e:
         logger.error(f" OpenSearch connection failed: {e}")

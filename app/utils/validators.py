@@ -13,3 +13,21 @@ def validate_domain_name(domain: str) -> str:
             "Only lowercase letters, digits, underscores, and hyphens are allowed."
         )
     return domain
+
+def validate_column_schema(schema: dict) -> bool:
+    """
+    Validate schema structure for downstream agents.
+    Expected format: {column_name: {"dtype": str, "sample_values": List[str]}}
+    """
+    if not isinstance(schema, dict):
+        return False
+
+    for col, info in schema.items():
+        if not isinstance(info, dict):
+            return False
+        if "dtype" not in info or "sample_values" not in info:
+            return False
+        if not isinstance(info["sample_values"], list):
+            return False
+
+    return True

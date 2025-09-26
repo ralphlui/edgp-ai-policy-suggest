@@ -57,6 +57,7 @@ async def suggest_rules(domain: str = Body(..., embed=True)):
                 "error": "Vector database connection failed",
                 "alert": {
                     "type": "error",
+            
                     "message": "Cannot connect to the vector database. Please check your connection and try again.",
                     "details": "Vector database is currently unavailable. Unable to retrieve or create schemas."
                 },
@@ -128,3 +129,107 @@ async def suggest_rules(domain: str = Body(..., embed=True)):
             },
             "domain": domain
         }, status_code=500)
+
+
+@router.post("/api/create/domain")
+async def create_domain(payload: dict = Body(...)):
+    try:
+        domain = payload["domain"]
+        schema = payload["schema"]
+        return_csv = payload.get("return_csv", False)  # toggle from FE
+
+        # Step 1: Embed column names
+        column_names = list(schema.keys())
+        try:
+            embeddings = await embed_column_names_batched_async(column_names)
+            logger.info(f"Successfully generated embeddings for {len(column_names)} columns")
+        except Exception as e:
+            logger.error(f"Failed to generate embeddings: {e}")
+            return JSONResponse({
+                "error": "Embedding generation failed",
+                "message": "Unable to generate embeddings for column names",
+                "details": str(e),
+                "domain": domain
+            }, status_code=503)
+
+        # Step 2: Upsert to vector DB (with error handling)
+        storage_success = False
+        storage_error = None
+        try:
+            docs = []
+            for i, col_name in enumerate(column_names):
+                col_info = schema[col_name]
+                docs.append(ColumnDoc(
+                    column_id=f"{domain}.{col_name}",
+                    column_name=col_name,
+                    embedding=embeddings[i],
+                    sample_values=[],  # Don't store sample values in vector DB
+                    metadata={
+                        "domain": domain,
+                        "type": col_info["dtype"],
+                        "pii": False,
+                        "table": domain,
+                        "source": "synthetic"
+                    }
+                ))
+            store.upsert_columns(docs)
+            logger.info(f"Successfully stored {len(docs)} columns for domain {domain} (column names only, no sample values)")
+            storage_success = True
+        except Exception as e:
+            logger.warning(f"Failed to store columns in vector DB: {e}")
+            storage_error = str(e)
+            # Continue with response generation even if storage fails
+
+        # Step 3: Return based on toggle
+        if return_csv:
+            # Generate sample data if not provided in schema
+            data = {}
+            for col, info in schema.items():
+                if "sample_values" in info and info["sample_values"]:
+                    # Use provided sample values
+                    data[col] = info["sample_values"][:5]
+                else:
+                    # Generate basic sample values based on dtype
+                    dtype = info.get("dtype", "string")
+                    if dtype == "integer":
+                        data[col] = [1, 2, 3, 4, 5]
+                    elif dtype == "float":
+                        data[col] = [1.0, 2.5, 3.0, 4.5, 5.0]
+                    elif dtype == "date":
+                        data[col] = ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"]
+                    else:  # string or other
+                        data[col] = [f"Sample_{col}_1", f"Sample_{col}_2", f"Sample_{col}_3", f"Sample_{col}_4", f"Sample_{col}_5"]
+            
+            df = pd.DataFrame(data)
+            buffer = io.StringIO()
+            df.to_csv(buffer, index=False)
+            buffer.seek(0)
+
+            # Add warning header if storage failed
+            headers = {"Content-Disposition": f"attachment; filename={domain}_schema.csv"}
+            if not storage_success:
+                headers["X-Storage-Warning"] = "Vector database storage failed - schema not saved"
+
+            return StreamingResponse(
+                buffer,
+                media_type="text/csv",
+                headers=headers
+            )
+
+        # JSON response with storage status
+        response_data = {"message": f"Schema for domain '{domain}' processed successfully."}
+        
+        if storage_success:
+            response_data["storage_status"] = "saved"
+        else:
+            response_data["storage_status"] = "failed"
+            response_data["storage_error"] = storage_error
+            response_data["note"] = "Schema was processed but not saved to vector database"
+        
+        return JSONResponse(response_data)
+
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+

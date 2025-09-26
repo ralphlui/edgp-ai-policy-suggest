@@ -1,141 +1,131 @@
-from __future__ import annotations
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import field_validator, model_validator, AnyHttpUrl, SecretStr
-from typing import List, Union, Literal, Optional
-from pathlib import Path
-import os
+from pydantic_settings import BaseSettings
+from pydantic import ConfigDict, field_validator
+from typing import List, Union
 import json
-from typing import List
-from pydantic import Field
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+import os
 
-class Settings(BaseSettings):
-    # ...
-    domains: List[str] = Field(default=["customer","vendor", "address", "product"])
+# Dynamic env loader: .env.development, .env.production, etc.
+env = os.getenv("ENVIRONMENT", "development")
+load_dotenv(dotenv_path=f".env.{env}")
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+RULE_MICROSERVICE_URL = os.getenv("RULE_MICROSERVICE_URL")
+
+# Ensure critical environment variables are set
+if not OPENAI_API_KEY:
+    raise RuntimeError("OPENAI_API_KEY is missing from environment")
+if not RULE_MICROSERVICE_URL:
+    raise RuntimeError("RULE_MICROSERVICE_URL is missing from environment")
 
 
-def resolve_env_file() -> str:
+def get_env_file_path() -> str:
     """
-    Decide which .env file to load based on APP_ENV (with ENVIRONMENT as fallback).
-
-    Mapping:
-      DEV / DEVELOPMENT / SIT -> .env.development
-      PROD / PRODUCTION / PRD -> .env.production
-      (no APP_ENV)            -> prefer .env.development, else .env
+    Determine which .env file to use based on APP_ENV environment variable.
+    
+    Environment mapping:
+    - SIT -> .env.development
+    - PRD -> .env.production
+    - DEV/development -> .env.development
+    - PROD/production -> .env.production
+    - Default -> .env (if exists, otherwise .env.development)
+    
+    Returns:
+        Path to the appropriate .env file
     """
-    app_env = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "development").strip().lower()
-
-    # normalize
-    dev_aliases = {"dev", "development", "sit"}
-    prod_aliases = {"prod", "production", "prd"}
-
-    if app_env in dev_aliases:
-        name = ".env.development"
-    elif app_env in prod_aliases:
-        name = ".env.production"
+    app_env = os.getenv("APP_ENV", "").upper()
+    
+    # Get the project root directory (where .env files are located)
+    project_root = Path(__file__).parent.parent.parent
+    
+    # Environment mapping
+    env_mapping = {
+        "SIT": ".env.development",
+        "DEV": ".env.development", 
+        "DEVELOPMENT": ".env.development",
+        "PRD": ".env.production",
+        "PROD": ".env.production",
+        "PRODUCTION": ".env.production"
+    }
+    
+    if app_env in env_mapping:
+        env_file = project_root / env_mapping[app_env]
+        if env_file.exists():
+            print(f"🌍 Using environment file: {env_file.name} (APP_ENV={app_env})")
+            return str(env_file)
+        else:
+            print(f"⚠️ Environment file {env_file.name} not found for APP_ENV={app_env}")
+    
+    # Fallback logic - only use .env if no specific environment was requested
+    if not app_env:  # Only fallback to .env if APP_ENV is not set
+        fallback_files = [".env", ".env.development"]
     else:
-        # custom, e.g. "staging" -> .env.staging if present, else fallbacks
-        name = f".env.{app_env}"
-
-    # search a few likely roots
-    candidates = [
-        Path.cwd() / name,
-        Path(__file__).resolve().parent / name,
-        Path(__file__).resolve().parent.parent / name,
-        Path.cwd() / ".env.development",
-        Path.cwd() / ".env",
-    ]
-
-    for p in candidates:
-        if p.exists():
-            print(f"🌍 Using environment file: {p}")
-            return str(p)
-
-    # last resort: a non-existent .env so Pydantic continues normally
-    fallback = Path.cwd() / ".env"
-    print(f"📝 No environment files found; using default path: {fallback}")
-    return str(fallback)
+        fallback_files = [".env.development"]  # Skip .env if specific env was requested but not found
+        
+    for fallback in fallback_files:
+        fallback_path = project_root / fallback
+        if fallback_path.exists():
+            print(f"🔄 Falling back to: {fallback_path.name}")
+            return str(fallback_path)
+    
+    # If no env files exist, return default path
+    default_path = project_root / ".env"
+    print(f"📝 No environment files found, using default: {default_path.name}")
+    return str(default_path)
 
 class Settings(BaseSettings):
-    # ---------- Core ----------
-    app_env: Literal["development", "prod", "production", "dev", "sit", "prd"] = "development"
-
+    # Server Configuration
     host: str = "0.0.0.0"
     port: int = 8008
 
+    # Environment
+    environment: str = "development"
+
+    # API Configuration
     api_title: str = "EDGP Rules Engine API"
     api_version: str = "1.0.0"
     api_description: str = "Data Quality Validation API using Great Expectations rules"
 
-    # ---------- External deps ----------
-    openai_api_key: SecretStr
-    rule_microservice_url: AnyHttpUrl
-
-    # OpenSearch
-    aoss_host: str  # e.g., xxxx.ap-southeast-1.aoss.amazonaws.com (no scheme)
+       # Required for AOSS
+    aoss_host: str
     aws_region: str = "ap-southeast-1"
 
-    # ---------- CORS ----------
+    # Optional: if you want to validate or log them
+    column_index_name: str = "columns"
+
+    # CORS Configuration
     allowed_origins: Union[List[str], str] = [
         "http://localhost:3000",
         "http://localhost:3001",
         "http://localhost:8080",
         "http://localhost:4200",
         "http://localhost:5173",
+        "http://localhost:8000",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:8080",
         "http://127.0.0.1:4200",
         "http://127.0.0.1:5173",
-        "*"  # ok for DEV only; we block in validator for PROD
+        "*"
     ]
 
-    @field_validator("allowed_origins")
+    @field_validator('allowed_origins')
     @classmethod
     def parse_cors_origins(cls, v):
         if isinstance(v, str):
-            # Try JSON first (["...","..."]), else comma-separated
             try:
                 return json.loads(v)
             except json.JSONDecodeError:
-                return [o.strip() for o in v.split(",") if o.strip()]
+                return [origin.strip() for origin in v.split(',')]
         return v
 
-    @model_validator(mode="after")
-    def validate_required_and_security(self):
-        # ensure secrets exist
-        if not self.openai_api_key or not self.openai_api_key.get_secret_value().strip():
-            raise ValueError("OPENAI_API_KEY is required")
-
-        if not self.rule_microservice_url:
-            raise ValueError("RULE_MICROSERVICE_URL is required")
-            
-        if not self.aoss_host:
-            raise ValueError("AOSS_HOST is required")
-
-        # PROD hardening
-        env_norm = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or self.app_env).lower()
-        if env_norm in {"prod", "production", "prd"}:
-            if "*" in (self.allowed_origins or []):
-                raise ValueError('In production, CORS cannot include "*" — set explicit origins.')
-
-        # Basic AOSS sanity
-        if self.aoss_host.startswith("https://"):
-            raise ValueError('AOSS_HOST must not include scheme (use host only, e.g., "xxxx.aoss.ap-southeast-1.amazonaws.com").')
-
-        return self
-
-    model_config = SettingsConfigDict(
-        env_file=resolve_env_file(),
-        env_file_encoding="utf-8",
+    model_config = ConfigDict(
+        env_file=get_env_file_path(),
+        env_file_encoding='utf-8',
         case_sensitive=False,
         extra="ignore",
-        env_prefix="",            # keep var names as-is
-        env_nested_delimiter="__" # opt-in for nested later, if needed
+        env_prefix=""
     )
 
-# singleton
 settings = Settings()
-
-if __name__ == "__main__":
-   
-    safe = settings.model_dump(exclude={"openai_api_key"})
-    print(safe)
