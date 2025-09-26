@@ -1,6 +1,7 @@
 import time, logging, uuid
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 
 from app.api.routes_opensearch import router as opensearch_router
 from app.core.config import settings
@@ -9,7 +10,24 @@ from app.core.state import STORES
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Policy Suggestion Agent", version="1.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    logger.info(" Starting application...")
+    logger.info(" Ready for lazy domain index creation")
+    # Don't pre-create stores - let them be created on-demand to avoid startup issues
+    
+    yield
+    
+    # Shutdown
+    logger.info(" Shutting down application...")
+    STORES.clear()
+
+app = FastAPI(
+    title="Policy Suggestion Agent", 
+    version="1.0",
+    lifespan=lifespan
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -33,14 +51,5 @@ async def log_requests(request: Request, call_next):
 @app.get("/health")
 def health():
     return {"status": "ok"}
-
-@app.on_event("startup")
-async def startup_event():
-    logger.info(" Starting application...")
-    logger.info(" Ready for lazy domain index creation")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    logger.info("Application shutdown")
 
 app.include_router(opensearch_router)
