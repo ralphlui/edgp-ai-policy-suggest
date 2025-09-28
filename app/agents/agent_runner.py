@@ -14,7 +14,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class AgentState(BaseModel):
-    schema: Dict[str, Any]
+    data_schema: Dict[str, Any]
     gx_rules: Optional[List[Any]] = None
     raw_suggestions: Optional[str] = None
     formatted_rules: Optional[List[Any]] = None
@@ -25,12 +25,12 @@ def build_graph():
     workflow = StateGraph(AgentState)
 
     workflow.add_node("fetch_rules", lambda s: {
-        "gx_rules": fetch_gx_rules.invoke(input="")
+        "gx_rules": fetch_gx_rules.invoke({"query": ""})
     })
 
     workflow.add_node("suggest", lambda s: {
         "raw_suggestions": suggest_column_rules.invoke({
-            "schema": s.schema,
+            "data_schema": s.data_schema,
             "gx_rules": s.gx_rules
         })
     })
@@ -40,7 +40,7 @@ def build_graph():
     })
 
     workflow.add_node("normalize", lambda s: {
-        "normalized_suggestions": normalize_rule_suggestions.invoke({"input": {"raw": s.formatted_rules}})
+        "normalized_suggestions": normalize_rule_suggestions.invoke({"rule_input": {"raw": s.formatted_rules}})
     })
 
     workflow.add_node("fallback", lambda s: {
@@ -48,7 +48,7 @@ def build_graph():
     })
 
     workflow.add_node("convert", lambda s: {
-    "rule_suggestions": convert_to_rule_ms_format.invoke({"input": {"suggestions": s.normalized_suggestions}})
+    "rule_suggestions": convert_to_rule_ms_format.invoke({"rule_input": {"suggestions": s.normalized_suggestions}})
     })
 
 
@@ -75,7 +75,7 @@ def build_graph():
 
 def run_agent(schema: dict) -> List[Dict[str, Any]]:
     graph = build_graph()
-    result = graph.invoke(AgentState(schema=schema), return_dict=False)
+    result = graph.invoke(AgentState(data_schema=schema), return_dict=False)
 
     if isinstance(result, dict):
         logger.warning("LangGraph returned dict instead of AgentState")

@@ -7,21 +7,50 @@ import logging
 logger = logging.getLogger(__name__)
 
 @tool
-def fetch_gx_rules(_: str = "") -> list:
+def fetch_gx_rules(query: str = "") -> list:
     """Fetch GX rules from Rule Microservice."""
-    resp = requests.get(RULE_MICROSERVICE_URL, timeout=10)
-    resp.raise_for_status()
-    return resp.json()
+    try:
+        resp = requests.get(RULE_MICROSERVICE_URL, timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+    except requests.exceptions.ConnectionError:
+        logger.warning(f"Rule Microservice not available at {RULE_MICROSERVICE_URL}. Using default rules.")
+        # Return a basic set of GX rules for common data types
+        return [
+            {
+                "rule_name": "ExpectColumnValuesToNotBeNull",
+                "description": "Expect column values to not be null",
+                "applies_to": ["string", "integer", "float", "date", "boolean"]
+            },
+            {
+                "rule_name": "ExpectColumnValuesToMatchRegex", 
+                "description": "Expect column values to match a regular expression",
+                "applies_to": ["string"]
+            },
+            {
+                "rule_name": "ExpectColumnValuesToBeBetween",
+                "description": "Expect column values to be between min and max",
+                "applies_to": ["integer", "float"]
+            },
+            {
+                "rule_name": "ExpectColumnValuesToBeOfType",
+                "description": "Expect column values to be of a specific type",
+                "applies_to": ["string", "integer", "float", "date", "boolean"]
+            }
+        ]
+    except Exception as e:
+        logger.error(f"Unexpected error fetching GX rules: {e}")
+        return []
 
 @tool
-def suggest_column_rules(schema: dict, gx_rules: list) -> str:
+def suggest_column_rules(data_schema: dict, gx_rules: list) -> str:
     """Use LLM to suggest GX rules per column."""
 
     llm = ChatOpenAI(model="gpt-4o-mini", openai_api_key=OPENAI_API_KEY, temperature=0.2)
 
-    prompt = prompt = f"""
+    prompt = f"""
     You are a data governance expert. Given this schema:
-    {json.dumps(schema, indent=2)}
+    {json.dumps(data_schema, indent=2)}
 
     And these available GX rules:
     {json.dumps(gx_rules, indent=2)}
@@ -55,6 +84,34 @@ def suggest_column_rules(schema: dict, gx_rules: list) -> str:
 
 
 @tool
+def suggest_column_names_only(domain: str) -> list:
+    """Use LLM to suggest CSV column names only (no data types) for a domain not found in vector DB."""
+    
+    llm = ChatOpenAI(model="gpt-4o-mini", openai_api_key=OPENAI_API_KEY, temperature=0.2)
+
+    prompt = f"""
+    You are a data architect helping suggest CSV column names for a new domain called '{domain}'.
+    
+    Suggest 5-11 plausible CSV column names that would be commonly found in this domain.
+    Focus on the most essential and representative columns for this domain.
+    
+    ⚠️ Important:
+    - Return ONLY a JSON array of column names (strings).
+    - Do NOT include data types, sample values, or any other metadata.
+    - Do NOT include markdown, explanation, or extra formatting.
+    - Do NOT wrap the output in ```json or any other code block.
+    
+    Example format:
+    ["column1", "column2", "column3"]
+    """
+
+    logger.info("LLM Prompt for column names:\n%s", prompt)
+    response = llm.invoke(prompt)
+    logger.info("Raw LLM column names output:\n%s", response.content)
+    return response.content.strip()
+
+
+@tool
 def format_gx_rules(raw_text: str) -> list:
     """Parse LLM output into structured rule list. Handles malformed JSON gracefully."""
     import json, re, logging
@@ -82,7 +139,7 @@ def format_gx_rules(raw_text: str) -> list:
         return [{"error": f"Could not parse rules: {e}", "raw": raw_text}]
 
 @tool
-def normalize_rule_suggestions(input: dict) -> dict:
+def normalize_rule_suggestions(rule_input: dict) -> dict:
     """
     Expects: { "raw": [...] }
     Returns: { "ColumnName": { "expectations": [...] }, ... }
@@ -90,7 +147,7 @@ def normalize_rule_suggestions(input: dict) -> dict:
     import logging
     logger = logging.getLogger(__name__)
 
-    raw = input.get("raw", [])
+    raw = rule_input.get("raw", [])
     if not isinstance(raw, list):
         logger.warning("⚠️ Expected list under 'raw', got: %s", type(raw))
         return {"error": "Invalid input type", "raw": raw}
@@ -107,12 +164,12 @@ def normalize_rule_suggestions(input: dict) -> dict:
     return result
 
 @tool
-def convert_to_rule_ms_format(input: dict) -> list:
+def convert_to_rule_ms_format(rule_input: dict) -> list:
     """
     Convert normalized suggestions to Rule Microservice format.
     Expects: { "suggestions": { column: { expectations: [...] } } }
     """
-    suggestions = input.get("suggestions", {})
+    suggestions = rule_input.get("suggestions", {})
     result = []
 
     for column, data in suggestions.items():

@@ -4,18 +4,21 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
 from langchain_openai import ChatOpenAI
 from app.vector_db.schema_loader import validate_column_schema
+from app.core.config import OPENAI_API_KEY
 import logging
 
 logger = logging.getLogger(__name__)
 
-# Initialize model and parser
-model = ChatOpenAI(model="gpt-4", temperature=0.3)
-parser = JsonOutputParser()
-
-# Prompt template
-prompt = ChatPromptTemplate.from_messages([
-    ("system", "You are a data architect helping define CSV schemas for new domains."),
-    ("human", """Suggest 5–11 plausible CSV columns for a domain called '{domain}'. 
+# Initialize model and parser lazily
+def get_model_chain() -> Runnable:
+    """Lazy initialization of ChatOpenAI model and chain"""
+    model = ChatOpenAI(model="gpt-4", temperature=0.3, openai_api_key=OPENAI_API_KEY)
+    parser = JsonOutputParser()
+    
+    # Prompt template
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "You are a data architect helping define CSV schemas for new domains."),
+        ("human", """Suggest 5–11 plausible CSV columns for a domain called '{domain}'. 
 For each column, include:
 - name
 - data type (e.g., string, integer, date)
@@ -32,16 +35,17 @@ Respond in JSON format:
     ...
   ]
 }}""")
-])
-
-# Chain: prompt → model → parser
-chain: Runnable = prompt | model | parser
+    ])
+    
+    # Chain: prompt → model → parser
+    return prompt | model | parser
 
 def call_llm(domain: str) -> Dict[str, Any]:
     """
     Invoke LLM to suggest schema for a domain.
     """
     logger.info(f"Calling LLM for domain: {domain}")
+    chain = get_model_chain()  # Lazy initialization
     result = chain.invoke({ "domain": domain })
     logger.info(f"LLM raw response: {result}")
     return result

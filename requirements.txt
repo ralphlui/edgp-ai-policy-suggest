@@ -1,8 +1,14 @@
 opensearch-py==2.6.0
-requests-aws4auth==1.2.3
 boto3==1.35.0
 pydantic==2.9.2
 pydantic-settings==2.6.1
 tenacity==8.5.0
 fastapi==0.115.4
 uvicorn[standard]==0.32.0
+langchain==0.2.16
+langchain-openai==0.1.25
+langchain-community==0.2.16
+langgraph==0.2.0
+openai==1.50.0
+pandas==2.2.0
+python-dotenv==1.0.1

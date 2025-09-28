@@ -6,7 +6,11 @@ import time, logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Policy Agent", version="1.0")
+app = FastAPI(
+    title="EDGP AI Policy Suggest Microservice", 
+    version="1.0",
+    description="AI-powered data quality policy and rule suggestion microservice"
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,8 +28,43 @@ async def log_requests(request: Request, call_next):
     logger.info(f"{request.method} {request.url} - {response.status_code} - {time.time() - start:.2f}s")
     return response
 
-@app.get("/health")
+@app.get("/api/aips/health")
 def health():
-    return {"status": "ok"}
-
-app.include_router(router)
+    """Enhanced health check with AWS connection status"""
+    from app.api.routes import get_store
+    
+    health_status = {
+        "service_name": "EDGP AI Policy Suggest Microservice",
+        "version": "1.0",
+        "status": "ok",
+        "timestamp": time.time(),
+        "services": {
+            "fastapi": "healthy",
+            "opensearch": "unknown"
+        }
+    }
+    
+    # Test OpenSearch connection
+    try:
+        store = get_store()
+        if store is None:
+            health_status["services"]["opensearch"] = "unavailable"
+            health_status["opensearch_message"] = "Store initialization failed - likely AWS permission issues"
+        else:
+            # Try a simple operation
+            try:
+                store.client.info()
+                health_status["services"]["opensearch"] = "healthy"
+            except Exception as e:
+                health_status["services"]["opensearch"] = "error"
+                health_status["opensearch_error"] = str(e)[:100]  # Truncate error
+    except Exception as e:
+        health_status["services"]["opensearch"] = "error"
+        health_status["opensearch_error"] = str(e)[:100]
+    
+    # Overall status
+    if health_status["services"]["opensearch"] != "healthy":
+        health_status["status"] = "degraded"
+        health_status["message"] = "Some services are unavailable"
+    
+    return health_status

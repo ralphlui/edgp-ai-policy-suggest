@@ -7,6 +7,7 @@ from app.aoss.column_store import OpenSearchColumnStore
 from app.core.config import settings
 import traceback
 import logging
+import time
 from app.aoss.column_store import ColumnDoc
 from app.embedding.embedder import embed_column_names_batched_async
 from fastapi.responses import StreamingResponse
@@ -16,11 +17,28 @@ import pandas as pd, io
 
 logger = logging.getLogger(__name__)
 
-       
-router = APIRouter()
-store = OpenSearchColumnStore(index_name=settings.column_index_name)
+# Lazy initialization of OpenSearch store to prevent startup failures
+_store = None
 
-@router.post("/api/suggest-rules")
+def get_store() -> OpenSearchColumnStore:
+    """Get OpenSearch store with lazy initialization and error handling"""
+    global _store
+    if _store is None:
+        try:
+            _store = OpenSearchColumnStore(index_name=settings.column_index_name)
+            logger.info(" OpenSearch store initialized successfully")
+        except Exception as e:
+            logger.error(f" Failed to initialize OpenSearch store: {e}")
+            logger.error("This is likely due to AWS permission issues. See AWS_ADMIN_SETUP_GUIDE.md")
+          
+            return None
+    return _store
+
+router = APIRouter()
+
+
+
+@router.post("/api/aips/suggest-rules")
 async def suggest_rules(domain: str = Body(..., embed=True)):
     try:
         # Try to get schema from vector database
@@ -67,40 +85,41 @@ async def suggest_rules(domain: str = Body(..., embed=True)):
         
         else:
             # Case 2: Can connect to vector DB but schema doesn't exist for this domain
-            # Only now generate LLM-suggested schema
-            logger.info(f"Vector DB accessible but no schema found. Generating LLM-suggested schema for domain: {domain}")
+            # Only now generate LLM-suggested column names (no data types)
+            logger.info(f"Vector DB accessible but no schema found. Generating column name suggestions for domain: {domain}")
             suggested_schema = bootstrap_schema_for_domain(domain)
             
-            # Create schema without sample values for actions
-            schema_without_samples = {col: {"dtype": info["dtype"]} for col, info in suggested_schema.items()}
+            # Create column names only (no data types) when domain not found in vector DB
+            suggested_column_names = list(suggested_schema.keys())
             
             return JSONResponse({
                 "error": "Domain not found",
                 "alert": {
                     "type": "confirmation",
                     "message": f"No schema exists for domain '{domain}'. Would you like to create one using our AI suggestions?",
-                    "details": f"We've generated {len(suggested_schema)} suggested columns for this domain."
+                    "details": f"We've generated {len(suggested_column_names)} suggested column names for this domain."
                 },
                 "domain": domain,
-                "suggested_schema": schema_without_samples,
+                "suggested_columns": suggested_column_names,
                 "actions": {
+                    "note": "Column names only suggested. Data types will be inferred from actual CSV data.",
                     "create_schema_with_csv": {
-                        "description": "Create schema and download sample CSV",
-                        "endpoint": "/api/confirm-schema",
+                        "description": "Use suggested column names to create schema from CSV",
+                        "endpoint": "/api/aips/create/domain",
                         "method": "POST",
                         "payload": {
                             "domain": domain,
-                            "schema": schema_without_samples,
+                            "columns": suggested_column_names,
                             "return_csv": True
                         }
                     },
                     "create_schema_only": {
-                        "description": "Create schema without CSV download",
-                        "endpoint": "/api/confirm-schema", 
+                        "description": "Use suggested column names to create schema",
+                        "endpoint": "/api/aips/create/domain",
                         "method": "POST",
                         "payload": {
                             "domain": domain,
-                            "schema": schema_without_samples,
+                            "columns": suggested_column_names,
                             "return_csv": False
                         }
                     }
@@ -109,7 +128,7 @@ async def suggest_rules(domain: str = Body(..., embed=True)):
                     "after_creation": [
                         "Schema will be saved to vector database",
                         "Optional: Download sample CSV data",
-                        "Call /api/suggest-rules again to get validation rules"
+                        "Call /api/aips/suggest-rules again to get validation rules"
                     ]
                 }
             }, status_code=404)
@@ -131,15 +150,56 @@ async def suggest_rules(domain: str = Body(..., embed=True)):
         }, status_code=500)
 
 
-@router.post("/api/create/domain")
+@router.post("/api/aips/create/domain")
 async def create_domain(payload: dict = Body(...)):
     try:
+        # Validate required fields
+        if "domain" not in payload:
+            return JSONResponse({
+                "error": "Missing required field: 'domain'",
+                "message": "The 'domain' field is required in the request payload."
+            }, status_code=400)
+        
+        # Support both formats: columns array or schema object
+        if "columns" in payload:
+            # New format: just column names
+            columns = payload["columns"]
+            if not isinstance(columns, list):
+                return JSONResponse({
+                    "error": "Invalid format: 'columns' must be an array",
+                    "message": "The 'columns' field should be an array of column names.",
+                    "expected_format": {
+                        "domain": "string",
+                        "columns": ["column1", "column2", "column3"],
+                        "return_csv": "boolean (optional)"
+                    }
+                }, status_code=400)
+            column_names = columns
+            schema = {col: {"type": "string"} for col in columns}  # Default all to string
+        elif "schema" in payload:
+            # Legacy format: schema object (types are optional)
+            schema = payload["schema"]
+            column_names = list(schema.keys())
+        else:
+            return JSONResponse({
+                "error": "Missing required field: 'columns' or 'schema'",
+                "message": "Either 'columns' (array of names) or 'schema' (object) is required.",
+                "expected_formats": {
+                    "option1": {
+                        "domain": "string",
+                        "columns": ["column1", "column2", "column3"],
+                        "return_csv": "boolean (optional)"
+                    },
+                    "option2": {
+                        "domain": "string", 
+                        "schema": {"column_name": {"type": "optional"}},
+                        "return_csv": "boolean (optional)"
+                    }
+                }
+            }, status_code=400)
+        
         domain = payload["domain"]
-        schema = payload["schema"]
         return_csv = payload.get("return_csv", False)  # toggle from FE
-
-        # Step 1: Embed column names
-        column_names = list(schema.keys())
         try:
             embeddings = await embed_column_names_batched_async(column_names)
             logger.info(f"Successfully generated embeddings for {len(column_names)} columns")
@@ -155,30 +215,94 @@ async def create_domain(payload: dict = Body(...)):
         # Step 2: Upsert to vector DB (with error handling)
         storage_success = False
         storage_error = None
-        try:
-            docs = []
-            for i, col_name in enumerate(column_names):
-                col_info = schema[col_name]
-                docs.append(ColumnDoc(
-                    column_id=f"{domain}.{col_name}",
-                    column_name=col_name,
-                    embedding=embeddings[i],
-                    sample_values=[],  # Don't store sample values in vector DB
-                    metadata={
-                        "domain": domain,
-                        "type": col_info["dtype"],
-                        "pii": False,
-                        "table": domain,
-                        "source": "synthetic"
-                    }
-                ))
-            store.upsert_columns(docs)
-            logger.info(f"Successfully stored {len(docs)} columns for domain {domain} (column names only, no sample values)")
-            storage_success = True
-        except Exception as e:
-            logger.warning(f"Failed to store columns in vector DB: {e}")
-            storage_error = str(e)
-            # Continue with response generation even if storage fails
+        
+        # Get store with error handling
+        store = get_store()
+        if store is None:
+            storage_error = "OpenSearch store not available due to configuration or permission issues"
+            logger.warning(storage_error)
+        else:
+            try:
+                docs = []
+                for i, col_name in enumerate(column_names):
+                    col_info = schema.get(col_name, {})
+                    # Default type to 'string' if not specified
+                    col_type = col_info.get("type", col_info.get("dtype", "string"))
+                    
+                    docs.append(ColumnDoc(
+                        column_id=f"{domain}.{col_name}",
+                        column_name=col_name,
+                        embedding=embeddings[i],
+                        sample_values=[],  # Don't store sample values in vector DB
+                        metadata={
+                            "domain": domain,
+                            "type": col_type,
+                            "pii": False,
+                            "table": domain,
+                            "source": "synthetic"
+                        }
+                    ))
+                store.upsert_columns(docs)
+                logger.info(f"Successfully stored {len(docs)} columns for domain {domain} (column names only, no sample values)")
+                storage_success = True
+            except Exception as e:
+                logger.warning(f"Failed to store columns in vector DB: {e}")
+                
+                # Enhanced error handling to unwrap nested exceptions
+                root_exception = e
+                exception_chain = []
+                
+                # Handle RetryError specifically  
+                if 'RetryError' in str(e):
+                    logger.error("This is a RetryError - attempting to extract the underlying exception")
+                    try:
+                        # Try to extract the original exception from the RetryError
+                        if hasattr(e, 'last_attempt') and hasattr(e.last_attempt, 'exception'):
+                            original_exception = e.last_attempt.exception()  # Call the method to get the exception
+                            logger.error(f"Extracted exception from RetryError: {original_exception}")
+                            logger.error(f"Exception type: {type(original_exception)}")
+                            
+                            # If it's a BulkIndexError, try to extract detailed error info
+                            if 'BulkIndexError' in str(original_exception):
+                                logger.error(f"BulkIndexError details: {original_exception}")
+                                
+                                # Try to access error details if available
+                                if hasattr(original_exception, 'errors'):
+                                    logger.error(f"Bulk errors: {original_exception.errors}")
+                                    for i, error in enumerate(original_exception.errors[:3]):  # Show first 3 errors
+                                        logger.error(f"Bulk error {i+1}: {error}")
+                                
+                                # Also try to access the error args
+                                if hasattr(original_exception, 'args') and original_exception.args:
+                                    logger.error(f"BulkIndexError args: {original_exception.args}")
+                        
+                        # Get full traceback
+                        tb_str = traceback.format_exception(type(e), e, e.__traceback__)
+                        logger.error(f"Full traceback: {''.join(tb_str)}")
+                    except Exception as tb_error:
+                        logger.error(f"Could not extract traceback or exception details: {tb_error}")
+                
+                # Unwrap nested exceptions to get to the root cause
+                while hasattr(root_exception, '__cause__') and root_exception.__cause__:
+                    exception_chain.append(f"{type(root_exception).__name__}: {str(root_exception)}")
+                    root_exception = root_exception.__cause__
+                
+                if root_exception != e and exception_chain:
+                    exception_chain.append(f"{type(root_exception).__name__}: {str(root_exception)}")
+                    logger.error(f"Exception chain: {' -> '.join(exception_chain)}")
+                
+                # If it's a BulkIndexError, try to extract detailed error info
+                if 'BulkIndexError' in str(root_exception):
+                    logger.error(f"BulkIndexError details: {root_exception}")
+                    
+                    # Try to access error details if available
+                    if hasattr(root_exception, 'errors'):
+                        logger.error(f"Bulk errors: {root_exception.errors}")
+                        for i, error in enumerate(root_exception.errors[:3]):  # Show first 3 errors
+                            logger.error(f"Bulk error {i+1}: {error}")
+                
+                storage_error = str(e)
+                # Continue with response generation even if storage fails
 
         # Step 3: Return based on toggle
         if return_csv:
@@ -232,4 +356,144 @@ async def create_domain(payload: dict = Body(...)):
         traceback.print_exc()
         return JSONResponse({"error": str(e)}, status_code=500)
 
+
+@router.get("/api/aips/vectordb/status")
+async def check_vectordb_status():
+    """Check vector database connection and index status."""
+    try:
+        store = get_store()
+        if store is None:
+            return JSONResponse({
+                "status": "error",
+                "message": "OpenSearch store not available",
+                "connection": "failed"
+            }, status_code=503)
+        
+        # Test connection and get index info
+        client = store.client
+        index_name = store.index_name
+        
+        # Check if index exists
+        index_exists = client.indices.exists(index=index_name)
+        
+        result = {
+            "status": "connected",
+            "index_name": index_name,
+            "index_exists": index_exists,
+            "connection": "success"
+        }
+        
+        if index_exists:
+            # Get index stats
+            stats = client.indices.stats(index=index_name)
+            result["document_count"] = stats["indices"][index_name]["total"]["docs"]["count"]
+            result["index_size"] = stats["indices"][index_name]["total"]["store"]["size_in_bytes"]
+        
+        return JSONResponse(result)
+        
+    except Exception as e:
+        return JSONResponse({
+            "status": "error", 
+            "message": str(e),
+            "connection": "failed"
+        }, status_code=500)
+
+
+@router.get("/api/aips/domains")
+async def list_domains_in_vectordb():
+    """List all domains stored in the vector database."""
+    try:
+        store = get_store()
+        if store is None:
+            return JSONResponse({
+                "error": "OpenSearch store not available"
+            }, status_code=503)
+        
+        # Query all documents and group by domain
+        query = {
+            "query": {"match_all": {}},
+            "size": 1000,
+            "_source": ["metadata.domain", "column_name", "metadata.type"]
+        }
+        
+        response = store.client.search(index=store.index_name, body=query)
+        
+        domains = {}
+        for hit in response["hits"]["hits"]:
+            source = hit["_source"]
+            domain = source.get("metadata", {}).get("domain", "unknown")
+            column_name = source.get("column_name", "unknown")
+            col_type = source.get("metadata", {}).get("type", "string")
+            
+            if domain not in domains:
+                domains[domain] = []
+            
+            domains[domain].append({
+                "column": column_name,
+                "type": col_type
+            })
+        
+        return JSONResponse({
+            "total_domains": len(domains),
+            "total_columns": response["hits"]["total"]["value"],
+            "domains": domains
+        })
+        
+    except Exception as e:
+        return JSONResponse({
+            "error": str(e),
+            "message": "Failed to retrieve domains from vector database"
+        }, status_code=500)
+
+
+@router.get("/api/aips/domain/{domain_name}")
+async def get_domain_from_vectordb(domain_name: str):
+    """Get specific domain details from vector database."""
+    try:
+        store = get_store()
+        if store is None:
+            return JSONResponse({
+                "error": "OpenSearch store not available"
+            }, status_code=503)
+        
+        # Query for specific domain
+        query = {
+            "query": {
+                "term": {"metadata.domain.keyword": domain_name}
+            },
+            "size": 100,
+            "_source": ["column_name", "metadata", "sample_values"]
+        }
+        
+        response = store.client.search(index=store.index_name, body=query)
+        
+        if response["hits"]["total"]["value"] == 0:
+            return JSONResponse({
+                "domain": domain_name,
+                "found": False,
+                "message": "Domain not found in vector database"
+            }, status_code=404)
+        
+        columns = []
+        for hit in response["hits"]["hits"]:
+            source = hit["_source"]
+            columns.append({
+                "column_name": source.get("column_name", "unknown"),
+                "type": source.get("metadata", {}).get("type", "string"),
+                "sample_values": source.get("sample_values", []),
+                "metadata": source.get("metadata", {})
+            })
+        
+        return JSONResponse({
+            "domain": domain_name,
+            "found": True,
+            "column_count": len(columns),
+            "columns": columns
+        })
+        
+    except Exception as e:
+        return JSONResponse({
+            "error": str(e),
+            "message": f"Failed to retrieve domain '{domain_name}' from vector database"
+        }, status_code=500)
 
