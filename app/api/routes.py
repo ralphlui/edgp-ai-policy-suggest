@@ -160,6 +160,25 @@ async def create_domain(payload: dict = Body(...)):
                 "message": "The 'domain' field is required in the request payload."
             }, status_code=400)
         
+        domain = payload["domain"]
+        
+        # Check if domain already exists
+        store = get_store()
+        if store is not None:
+            try:
+                existing_columns = store.get_columns_by_domain(domain)
+                if existing_columns:
+                    return JSONResponse({
+                        "message": f"Domain '{domain}' already exists",
+                        "status": "exists", 
+                        "existing_columns": [col.get("column_name") for col in existing_columns],
+                        "column_count": len(existing_columns),
+                        "note": "Domain was not created because it already exists in the database"
+                    }, status_code=200)
+            except Exception as e:
+                logger.warning(f"Failed to check if domain exists: {e}")
+                # Continue with creation if we can't check (don't fail on this)
+        
         # Support both formats: columns array or schema object
         if "columns" in payload:
             # New format: just column names
@@ -198,7 +217,6 @@ async def create_domain(payload: dict = Body(...)):
                 }
             }, status_code=400)
         
-        domain = payload["domain"]
         return_csv = payload.get("return_csv", False)  # toggle from FE
         try:
             embeddings = await embed_column_names_batched_async(column_names)
@@ -399,7 +417,7 @@ async def check_vectordb_status():
         }, status_code=500)
 
 
-@router.get("/api/aips/domains")
+@router.get("/api/aips/vectordb/domains")
 async def list_domains_in_vectordb():
     """List all domains stored in the vector database."""
     try:
@@ -446,7 +464,7 @@ async def list_domains_in_vectordb():
         }, status_code=500)
 
 
-@router.get("/api/aips/domain/{domain_name}")
+@router.get("/api/aips/vectordb/domain/{domain_name}")
 async def get_domain_from_vectordb(domain_name: str):
     """Get specific domain details from vector database."""
     try:

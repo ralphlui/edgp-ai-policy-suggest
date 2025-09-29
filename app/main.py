@@ -68,3 +68,25 @@ def health():
         health_status["message"] = "Some services are unavailable"
     
     return health_status
+
+@app.get("/api/aips/info")
+def service_info():
+    """Service information endpoint"""
+    return {
+        "service_name": "EDGP AI Policy Suggest Microservice",
+        "version": "1.0",
+        "description": "AI-powered data quality policy and rule suggestion microservice",
+        "endpoints": {
+            "health": "GET /api/aips/health",
+            "info": "GET /api/aips/info", 
+            "suggest_rules": "POST /api/aips/suggest-rules",
+            "create_domain": "POST /api/aips/create/domain",
+            "vectordb_status": "GET /api/aips/vectordb/status",
+            "vectordb_domains": "GET /api/aips/vectordb/domains",
+            "vectordb_domain": "GET /api/aips/vectordb/domain/{domain_name}"
+        },
+        "repository": "edgp-ai-policy-suggest",
+        "branch": "feature/opensearch-column-store"
+    }
+
+app.include_router(router)
