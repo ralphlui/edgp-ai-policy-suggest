@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test runner for EDGP AI Policy Suggest application
+Updated test runner for EDGP AI Policy Suggest application
 Automatically loads .env.test environment and runs test suite with coverage
 """
 
@@ -10,11 +10,11 @@ import subprocess
 from pathlib import Path
 
 # Add project root to Python path
-PROJECT_ROOT = Path(__file__).parent.parent.parent
+PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 # Import and setup test environment first
-from app.test.test_config import setup_test_environment
+from tests.test_config import setup_test_environment
 
 def run_tests_with_coverage():
     """Run tests with coverage reporting using .env.test"""
@@ -25,18 +25,19 @@ def run_tests_with_coverage():
     # Change to project root directory
     os.chdir(PROJECT_ROOT)
     
-    print("🧪 Running test suite with coverage...")
+    print("🧪 Running comprehensive test suite with coverage...")
     
-    # Run pytest with coverage
+    # Run pytest with coverage and async support
     cmd = [
         sys.executable, "-m", "pytest",
         "--verbose",
+        "--asyncio-mode=auto",  # Enable async support
         "--cov=app",
         "--cov-report=html:htmlcov",
         "--cov-report=term-missing",
         "--cov-report=xml",
-        "--cov-fail-under=70",
-        "app/test/"
+        "--cov-fail-under=90",  # Aim for 90%+ coverage
+        "tests/"
     ]
     
     try:
@@ -68,7 +69,7 @@ def run_specific_tests(test_pattern=None, markers=None):
     if test_pattern:
         cmd.extend(["-k", test_pattern])
     
-    cmd.append("app/test/")
+    cmd.append("tests/")
     
     print(f"🧪 Running tests with command: {' '.join(cmd)}")
     
@@ -95,7 +96,7 @@ def main():
     elif args.no_coverage:
         setup_test_environment()
         os.chdir(PROJECT_ROOT)
-        result = subprocess.run([sys.executable, "-m", "pytest", "--verbose", "app/test/"])
+        result = subprocess.run([sys.executable, "-m", "pytest", "--verbose", "tests/"])
         return result.returncode
     else:
         return run_tests_with_coverage()
