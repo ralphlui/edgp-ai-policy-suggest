@@ -10,39 +10,39 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 def test_lazy_initialization():
     """Test that the lazy initialization prevents startup failures"""
-    print("🧪 Testing lazy initialization fixes...")
+    print(" Testing lazy initialization fixes...")
     
     try:
         # This should work even without AWS permissions
         from app.aoss.column_store import OpenSearchColumnStore
         from app.core.config import settings
-        print("✅ Imports working")
+        print(" Imports working")
         
         # Test that we don't try to connect during import
-        print("✅ No connection attempt during import")
+        print(" No connection attempt during import")
         
         # Test the lazy getter function
         try:
             from app.api.routes import get_store
-            print("✅ get_store function available")
+            print(" get_store function available")
             
             # This might fail but shouldn't crash
             store = get_store()
             if store is None:
-                print("⚠️ Store is None (expected with AWS permission issues)")
-                print("✅ Graceful handling of connection failures")
+                print(" Store is None (expected with AWS permission issues)")
+                print(" Graceful handling of connection failures")
             else:
-                print("✅ Store initialized successfully")
+                print(" Store initialized successfully")
                 
         except Exception as e:
-            print(f"⚠️ Store initialization failed: {e}")
-            print("✅ But application didn't crash during import!")
+            print(f" Store initialization failed: {e}")
+            print(" But application didn't crash during import!")
             
-        print("🎉 Lazy initialization is working correctly!")
+        print(" Lazy initialization is working correctly!")
         return True
         
     except Exception as e:
-        print(f"❌ Test failed: {e}")
+        print(f" Test failed: {e}")
         import traceback
         traceback.print_exc()
         return False

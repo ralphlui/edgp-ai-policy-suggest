@@ -1,6 +1,13 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
 from app.api.routes import router
+from app.core.exceptions import (
+    authentication_exception_handler,
+    general_exception_handler,
+    validation_exception_handler,
+    internal_server_error_handler
+)
 import time, logging
 
 logging.basicConfig(level=logging.INFO)
@@ -11,6 +18,11 @@ app = FastAPI(
     version="1.0",
     description="AI-powered data quality policy and rule suggestion microservice"
 )
+
+# Add exception handlers for standardized responses
+app.add_exception_handler(HTTPException, authentication_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(Exception, internal_server_error_handler)
 
 app.add_middleware(
     CORSMiddleware,

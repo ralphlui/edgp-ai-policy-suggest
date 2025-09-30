@@ -31,7 +31,7 @@ def test_aws_credentials():
         sts = boto3.client('sts')
         identity = sts.get_caller_identity()
         
-        print("✅ AWS Credentials Working!")
+        print(" AWS Credentials Working!")
         print(f"Account ID: {identity['Account']}")
         print(f"User ARN: {identity['Arn']}")
         print(f"User ID: {identity['UserId']}")
@@ -39,8 +39,8 @@ def test_aws_credentials():
         return True, identity
         
     except Exception as e:
-        print(f"❌ AWS Credential Test Failed: {e}")
-        print("\n💡 Solutions:")
+        print(f" AWS Credential Test Failed: {e}")
+        print("\n Solutions:")
         print("1. Set environment variables:")
         print("   export AWS_ACCESS_KEY_ID=your_key")
         print("   export AWS_SECRET_ACCESS_KEY=your_secret")
@@ -75,30 +75,30 @@ def test_aoss_permissions(identity_arn):
         
         # Test basic cluster info
         info = client.info()
-        print("✅ AOSS Connection Successful!")
+        print(" AOSS Connection Successful!")
         print(f"Cluster Name: {info.get('cluster_name', 'Unknown')}")
         print(f"Version: {info.get('version', {}).get('number', 'Unknown')}")
         
         return True, client
         
     except Exception as e:
-        print(f"❌ AOSS Connection Failed: {e}")
+        print(f" AOSS Connection Failed: {e}")
         print(f"\nError type: {type(e).__name__}")
         
         if "AuthorizationException" in str(e):
-            print("\n💡 Authorization Error Solutions:")
+            print("\n Authorization Error Solutions:")
             print("1. Add IAM policy to your user with AOSS permissions")
             print("2. Create/update AOSS Data Access Policy")
             print("3. Include your user ARN in the data access policy:")
             print(f"   {identity_arn}")
             
         elif "Forbidden" in str(e):
-            print("\n💡 Forbidden Error Solutions:")
+            print("\n Forbidden Error Solutions:")
             print("1. Check AOSS Data Access Policy")
             print("2. Ensure your user ARN is in the principals list")
             
         elif "timeout" in str(e).lower():
-            print("\n💡 Timeout Error Solutions:")
+            print("\n Timeout Error Solutions:")
             print("1. Check network connectivity")
             print("2. Verify the AOSS host is correct")
             print("3. Check security group rules")
@@ -131,9 +131,9 @@ def test_index_operations(client):
         # Create index if it doesn't exist
         if not client.indices.exists(index=test_index):
             client.indices.create(index=test_index, body=index_body)
-            print(f"✅ Created test index: {test_index}")
+            print(f" Created test index: {test_index}")
         else:
-            print(f"✅ Test index already exists: {test_index}")
+            print(f" Test index already exists: {test_index}")
         
         # Test document insertion
         doc = {
@@ -142,20 +142,20 @@ def test_index_operations(client):
         }
         
         result = client.index(index=test_index, id="test-doc", body=doc)
-        print(f"✅ Document inserted successfully: {result['result']}")
+        print(f" Document inserted successfully: {result['result']}")
         
         # Test document retrieval
         retrieved = client.get(index=test_index, id="test-doc")
-        print(f"✅ Document retrieved successfully: {retrieved['found']}")
+        print(f" Document retrieved successfully: {retrieved['found']}")
         
         # Clean up test index
         client.indices.delete(index=test_index)
-        print(f"✅ Cleaned up test index: {test_index}")
+        print(f" Cleaned up test index: {test_index}")
         
         return True
         
     except Exception as e:
-        print(f"❌ Index Operations Failed: {e}")
+        print(f" Index Operations Failed: {e}")
         
         # Try to clean up even if operations failed
         try:
@@ -261,11 +261,11 @@ def main():
     # Test 3: Index Operations
     ops_ok = test_index_operations(client)
     if not ops_ok:
-        print("\n⚠️ Basic connection works but index operations failed")
+        print("\n Basic connection works but index operations failed")
         print("Check your data access policy permissions")
         sys.exit(1)
     
-    print_header("✅ All Tests Passed!")
+    print_header(" All Tests Passed!")
     print("Your AWS setup is working correctly!")
     print("You can now run your main application.")
 

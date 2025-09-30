@@ -7,7 +7,7 @@ import os
 import sys
 
 def test_env_config():
-    print("🧪 Testing Environment Variable Configuration")
+    print(" Testing Environment Variable Configuration")
     print("=" * 55)
     
     # Set some test environment variables (simulating Kubernetes injection)
@@ -23,7 +23,7 @@ def test_env_config():
         'PORT': '8022'
     }
     
-    print("📝 Setting test environment variables...")
+    print(" Setting test environment variables...")
     for key, value in test_env.items():
         os.environ[key] = value
         print(f"   {key}={value}")
@@ -32,7 +32,7 @@ def test_env_config():
     try:
         from app.core.config import settings
         
-        print(f"\n📋 Configuration loaded successfully:")
+        print(f"\n Configuration loaded successfully:")
         print(f"   Environment: {settings.environment}")
         print(f"   Host: {settings.host}")
         print(f"   Port: {settings.port}")
@@ -44,12 +44,12 @@ def test_env_config():
         print(f"   OpenAI Secret Name: {settings.openai_secret_name}")
         print(f"   OpenSearch Index: {settings.opensearch_index}")
         
-        print("\n✅ All environment variables loaded successfully!")
-        print("🐳 Your app is ready for Kubernetes deployment!")
+        print("\n All environment variables loaded successfully!")
+        print(" Your app is ready for Kubernetes deployment!")
         return True
         
     except Exception as e:
-        print(f"\n❌ Configuration loading failed: {e}")
+        print(f"\n Configuration loading failed: {e}")
         import traceback
         traceback.print_exc()
         return False

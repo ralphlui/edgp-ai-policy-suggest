@@ -1,10 +1,11 @@
-from fastapi import APIRouter, HTTPException, Body
+from fastapi import APIRouter, HTTPException, Body, Depends
 from fastapi.responses import JSONResponse
 from app.agents.agent_runner import run_agent
 from app.agents.schema_suggester import bootstrap_schema_for_domain
 from app.vector_db.schema_loader import get_schema_by_domain
 from app.aoss.column_store import OpenSearchColumnStore
 from app.core.config import settings
+from app.auth.bearer import verify_any_scope_token, UserInfo
 import traceback
 import logging
 import time
@@ -25,7 +26,7 @@ def get_store() -> OpenSearchColumnStore:
     global _store
     if _store is None:
         try:
-            _store = OpenSearchColumnStore(index_name=settings.column_index_name)
+            _store = OpenSearchColumnStore(index_name=settings.opensearch_index)
             logger.info(" OpenSearch store initialized successfully")
         except Exception as e:
             logger.error(f" Failed to initialize OpenSearch store: {e}")
@@ -39,8 +40,14 @@ router = APIRouter()
 
 
 @router.post("/api/aips/suggest-rules")
-async def suggest_rules(domain: str = Body(..., embed=True)):
+async def suggest_rules(
+    domain: str = Body(..., embed=True),
+    user: UserInfo = Depends(verify_any_scope_token)
+):
     try:
+        # Log authenticated user information
+        logger.info(f"🔐 Suggest rules request from user: {user.email} with scopes: {user.scopes}")
+        
         # Try to get schema from vector database
         logger.info(f"Attempting to retrieve schema for domain: {domain}")
         
@@ -151,8 +158,14 @@ async def suggest_rules(domain: str = Body(..., embed=True)):
 
 
 @router.post("/api/aips/create/domain")
-async def create_domain(payload: dict = Body(...)):
+async def create_domain(
+    payload: dict = Body(...),
+    user: UserInfo = Depends(verify_any_scope_token)
+):
     try:
+        # Log authenticated user information
+        logger.info(f"🔐 Create domain request from user: {user.email} with scopes: {user.scopes}")
+        
         # Validate required fields
         if "domain" not in payload:
             return JSONResponse({
