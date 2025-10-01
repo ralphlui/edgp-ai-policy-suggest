@@ -58,18 +58,18 @@ def create_aoss_client(timeout_sec: int = 30) -> OpenSearch:
         # Test the connection (but don't fail startup if this doesn't work)
         try:
             info = client.info()
-            logger.info("✅ AOSS connection successful!")
+            logger.info(" AOSS connection successful!")
             logger.info(f"Cluster name: {info.get('cluster_name', 'Unknown')}")
             logger.info(f"Version: {info.get('version', {}).get('number', 'Unknown')}")
         except Exception as test_error:
-            logger.warning(f"⚠️ AOSS connection test failed: {test_error}")
+            logger.warning(f" AOSS connection test failed: {test_error}")
             logger.warning("This might be due to:")
             logger.warning("1. Missing IAM permissions for your AWS user")
             logger.warning("2. Missing OpenSearch Serverless Data Access Policy")
             logger.warning("3. Incorrect collection name or region")
             logger.warning("See AWS_SETUP_GUIDE.md for detailed setup instructions")
             # Don't raise the error - let the client be created but warn about issues
-            logger.warning("⚠️ Creating client anyway - operations may fail until permissions are fixed")
+            logger.warning(" Creating client anyway - operations may fail until permissions are fixed")
             
         return client
         
