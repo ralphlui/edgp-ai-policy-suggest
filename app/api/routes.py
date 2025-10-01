@@ -388,6 +388,46 @@ async def create_domain(
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+
+@router.get("/api/aips/domains")
+async def get_domains(
+    user: UserInfo = Depends(verify_any_scope_token)
+):
+    """Get all available domains in the specified format."""
+    try:
+        # Log authenticated user information
+        logger.info(f" Get domains request from user: {user.email} with scopes: {user.scopes}")
+        
+        store = get_store()
+        if store is None:
+            return JSONResponse({
+                "success": False,
+                "message": "OpenSearch store not available",
+                "totalRecord": 0,
+                "data": []
+            }, status_code=503)
+        
+        # Get all unique domains from the vector database
+        domains = store.get_all_domains()
+        
+        return JSONResponse({
+            "success": True,
+            "message": f"Successfully retrieved all domain{'s' if len(domains) != 1 else ''}.",
+            "totalRecord": len(domains),
+            "data": domains
+        })
+        
+    except Exception as e:
+        logger.error(f"Error retrieving domains: {e}")
+        return JSONResponse({
+            "success": False,
+            "message": f"Failed to retrieve domains: {str(e)}",
+            "totalRecord": 0,
+            "data": []
+        }, status_code=500)
+
+
+
 @router.get("/api/aips/vector/status")
 async def check_vectordb_status():
     """Check vector database connection and index status."""
@@ -430,7 +470,8 @@ async def check_vectordb_status():
         }, status_code=500)
 
 
-@router.get("/api/aips/domains")
+
+@router.get("/api/aips/domains-schema")
 async def list_domains_in_vectordb():
     """List all domains stored in the vector database."""
     try:

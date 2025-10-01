@@ -87,7 +87,7 @@ class OpenSearchColumnStore:
         except Exception as e:
             logger.error(f" Failed to create index {self.index_name}: {e}")
             if "AuthorizationException" in str(e):
-                logger.error("🔐 Permission denied - check your AOSS Data Access Policy")
+                logger.error(" Permission denied - check your AOSS Data Access Policy")
             elif "ResourceAlreadyExistsException" in str(e):
                 logger.info("Index already exists (race condition)")
                 return  # This is OK
@@ -139,7 +139,7 @@ class OpenSearchColumnStore:
                     logger.info(f" Successfully upserted {success_count} documents")
                     
                     if failed_items:
-                        logger.warning(f"⚠️ {len(failed_items)} documents failed to upsert")
+                        logger.warning(f" {len(failed_items)} documents failed to upsert")
                         for failure in failed_items:
                             logger.error(f"Failed item: {failure}")
                     
@@ -254,6 +254,38 @@ class OpenSearchColumnStore:
             return [{k: h.get("_source", {}).get(k) for k in fields} for h in hits]
         except Exception as e:
             logger.error(f"Error searching for domain {domain}: {e}")
+            return []
+
+    def get_all_domains(self) -> List[str]:
+        """
+        Get all unique domain names from the vector database.
+        
+        Returns:
+            List of unique domain names
+        """
+        try:
+            # Use aggregation to get unique domains
+            query = {
+                "size": 0,  # We don't need the actual documents, just aggregation results
+                "aggs": {
+                    "unique_domains": {
+                        "terms": {
+                            "field": "metadata.domain",
+                            "size": 1000  # Max domains to return
+                        }
+                    }
+                }
+            }
+            
+            res = self.client.search(index=self.index_name, body=query)
+            buckets = res.get("aggregations", {}).get("unique_domains", {}).get("buckets", [])
+            
+            # Extract domain names from aggregation buckets
+            domains = [bucket["key"] for bucket in buckets]
+            return sorted(domains)  # Return sorted list for consistency
+            
+        except Exception as e:
+            logger.error(f"Error getting all domains: {e}")
             return []
 
 # Global store instance for backward compatibility with tests
