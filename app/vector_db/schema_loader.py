@@ -12,7 +12,7 @@ def get_store():
     global _store
     if _store is None:
         try:
-            _store = OpenSearchColumnStore(index_name=settings.column_index_name)
+            _store = OpenSearchColumnStore(index_name=settings.opensearch_index)
             logger.info(" Schema loader: OpenSearch store initialized")
         except Exception as e:
             logger.warning(f" Schema loader: Failed to initialize OpenSearch store: {e}")

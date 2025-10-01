@@ -75,7 +75,7 @@ def build_graph():
 
 def run_agent(schema: dict) -> List[Dict[str, Any]]:
     graph = build_graph()
-    result = graph.invoke(AgentState(data_schema=schema), return_dict=False)
+    result = graph.invoke(AgentState(data_schema=schema))
 
     if isinstance(result, dict):
         logger.warning("LangGraph returned dict instead of AgentState")

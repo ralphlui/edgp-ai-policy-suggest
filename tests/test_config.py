@@ -22,9 +22,9 @@ def setup_test_environment():
     # Load test environment file EARLY
     if TEST_ENV_FILE.exists():
         load_dotenv(dotenv_path=TEST_ENV_FILE, override=True)
-        print(f"✅ Loaded test environment from {TEST_ENV_FILE}")
+        print(f" Loaded test environment from {TEST_ENV_FILE}")
     else:
-        print(f"⚠️ Test environment file not found: {TEST_ENV_FILE}")
+        print(f" Test environment file not found: {TEST_ENV_FILE}")
     
     # Ensure critical test variables are set
     if not os.getenv("OPENAI_API_KEY"):

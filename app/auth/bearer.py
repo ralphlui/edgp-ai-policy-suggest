@@ -57,32 +57,6 @@ def create_auth_error_response(message: str) -> JSONResponse:
     """Create standardized authentication error response"""
     return create_error_response(401, message)
 
-class StandardResponse(BaseModel):
-    """Standardized API response format"""
-    data: Optional[Any] = None
-    success: bool = False
-    message: str = ""
-    totalRecord: int = 0
-    status: int = 200
-
-def create_error_response(status_code: int, message: str, data: Optional[Any] = None) -> JSONResponse:
-    """Create standardized error response"""
-    response_data = StandardResponse(
-        data=data,
-        success=False,
-        message=message,
-        totalRecord=0,
-        status=status_code
-    )
-    return JSONResponse(
-        status_code=status_code,
-        content=response_data.model_dump()
-    )
-
-def create_auth_error_response(message: str) -> JSONResponse:
-    """Create standardized authentication error response"""
-    return create_error_response(401, message)
-
 class JWTTokenValidator:
     """
     JWT Token validator with RSA public key verification and auth microservice integration
@@ -103,20 +77,21 @@ class JWTTokenValidator:
                 
                 # If it doesn't start with -----BEGIN, assume it's base64 encoded
                 if not public_key_str.startswith('-----BEGIN'):
-                    import base64
-                    try:
-                        decoded_key = base64.b64decode(public_key_str).decode('utf-8')
-                        public_key_str = decoded_key
-                    except Exception as e:
-                        logger.warning(f"Failed to decode base64 public key: {e}")
+                    # Convert base64 key to PEM format
+                    pem_key = f"-----BEGIN PUBLIC KEY-----\n"
+                    # Split the base64 string into 64-character lines
+                    for i in range(0, len(public_key_str), 64):
+                        pem_key += public_key_str[i:i+64] + "\n"
+                    pem_key += "-----END PUBLIC KEY-----"
+                    public_key_str = pem_key
                 
                 self.public_key = public_key_str
-                logger.info("✅ JWT public key loaded successfully")
+                logger.info(" JWT public key loaded successfully")
             else:
-                logger.warning("⚠️ No JWT public key configured - token validation will fail")
+                logger.warning(" No JWT public key configured - token validation will fail")
                 
         except Exception as e:
-            logger.error(f"❌ Failed to load JWT public key: {e}")
+            logger.error(f" Failed to load JWT public key: {e}")
             self.public_key = None
     
     def decode_token(self, token: str) -> Dict:
@@ -152,39 +127,39 @@ class JWTTokenValidator:
                 }
             )
             
-            logger.debug(f"✅ JWT token decoded successfully for user: {payload.get('userEmail', 'unknown')}")
+            logger.debug(f" JWT token decoded successfully for user: {payload.get('userEmail', 'unknown')}")
             return payload
             
         except jwt.ExpiredSignatureError:
-            logger.warning("⚠️ JWT token has expired")
+            logger.warning(" JWT token has expired")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="JWT token is expired",
                 headers={"WWW-Authenticate": "Bearer"}
             )
         except jwt.InvalidSignatureError:
-            logger.warning("⚠️ JWT token has invalid signature")
+            logger.warning(" JWT token has invalid signature")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token signature",
                 headers={"WWW-Authenticate": "Bearer"}
             )
         except jwt.MissingRequiredClaimError as e:
-            logger.warning(f"⚠️ JWT token missing required claim: {e}")
+            logger.warning(f" JWT token missing required claim: {e}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=f"JWT token missing required claim: {e}",
                 headers={"WWW-Authenticate": "Bearer"}
             )
         except jwt.InvalidTokenError as e:
-            logger.warning(f"⚠️ Invalid JWT token: {e}")
+            logger.warning(f" Invalid JWT token: {e}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid JWT token",
                 headers={"WWW-Authenticate": "Bearer"}
             )
         except Exception as e:
-            logger.error(f"❌ Unexpected error decoding JWT token: {e}")
+            logger.error(f" Unexpected error decoding JWT token: {e}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Token validation error"
@@ -224,7 +199,7 @@ class JWTTokenValidator:
                 )
             
             async with httpx.AsyncClient(timeout=30.0) as client:
-                logger.debug(f"🔍 Validating user {user_email} (ID: {user_id}) with auth service...")
+                logger.debug(f" Validating user {user_email} (ID: {user_id}) with auth service...")
                 
                 # Prepare headers exactly as expected by the auth service
                 headers = {
@@ -240,37 +215,37 @@ class JWTTokenValidator:
                 
                 if response.status_code == 200:
                     user_data = response.json()
-                    logger.info(f"✅ User {user_email} (ID: {user_id}) validated successfully")
+                    logger.info(f" User {user_email} (ID: {user_id}) validated successfully")
                     return user_data
                 elif response.status_code == 401:
-                    logger.warning(f"⚠️ User {user_email} (ID: {user_id}) is not authorized")
+                    logger.warning(f" User {user_email} (ID: {user_id}) is not authorized")
                     raise HTTPException(
                         status_code=status.HTTP_401_UNAUTHORIZED,
                         detail="User not authorized",
                         headers={"WWW-Authenticate": "Bearer"}
                     )
                 elif response.status_code == 404:
-                    logger.warning(f"⚠️ User {user_email} (ID: {user_id}) not found")
+                    logger.warning(f" User {user_email} (ID: {user_id}) not found")
                     raise HTTPException(
                         status_code=status.HTTP_401_UNAUTHORIZED,
                         detail="User not found",
                         headers={"WWW-Authenticate": "Bearer"}
                     )
                 else:
-                    logger.error(f"❌ Auth service returned {response.status_code}: {response.text}")
+                    logger.error(f" Auth service returned {response.status_code}: {response.text}")
                     raise HTTPException(
                         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                         detail="Authentication service error"
                     )
                     
         except httpx.TimeoutException:
-            logger.error("❌ Auth service request timed out")
+            logger.error(" Auth service request timed out")
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Authentication service timeout"
             )
         except httpx.RequestError as e:
-            logger.error(f"❌ Auth service request failed: {e}")
+            logger.error(f" Auth service request failed: {e}")
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Authentication service unavailable"
@@ -278,7 +253,7 @@ class JWTTokenValidator:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"❌ Unexpected error validating user: {e}")
+            logger.error(f" Unexpected error validating user: {e}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="User validation error"
@@ -309,14 +284,14 @@ class JWTTokenValidator:
             
             # Only allow if user has manage:policy scope
             if 'manage:policy' in user_scopes:
-                logger.debug(f"✅ User has manage:policy scope - access granted. All scopes: {user_scopes}")
+                logger.debug(f" User has manage:policy scope - access granted. All scopes: {user_scopes}")
                 return True
             
             logger.warning(f"⚠️ User lacks manage:policy scope. Has: {user_scopes}")
             return False
             
         except Exception as e:
-            logger.error(f"❌ Error checking scope permissions: {e}")
+            logger.error(f" Error checking scope permissions: {e}")
             return False
 
 # Global token validator instance
@@ -418,7 +393,7 @@ async def verify_jwt_token(
         # Validate user with authentication microservice
         await token_validator.validate_user_with_auth_service(token_payload, token)
         
-        logger.info(f"✅ Authentication successful for user: {user_email} (ID: {user_id})")
+        logger.info(f" Authentication successful for user: {user_email} (ID: {user_id})")
         
         return UserInfo(
             email=user_email,
@@ -430,7 +405,7 @@ async def verify_jwt_token(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Unexpected error in JWT token verification: {e}")
+        logger.error(f" Unexpected error in JWT token verification: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Authentication service error"
@@ -469,9 +444,29 @@ async def optional_jwt_token(
         # Return None for optional auth instead of raising exception
         return None
     except Exception as e:
-        logger.error(f"❌ Error in optional JWT token verification: {e}")
+        logger.error(f" Error in optional JWT token verification: {e}")
         return None
 
 def get_token_validator() -> JWTTokenValidator:
     """Get the global token validator instance"""
     return token_validator
+
+async def get_user_info(token: str) -> Dict:
+    """Get user info from JWT token - compatibility function for tests"""
+    try:
+        # Decode token
+        payload = token_validator.decode_token(token)
+        
+        # Validate with auth service
+        user_data = await token_validator.validate_user_with_auth_service(payload, token)
+        
+        return {
+            "email": payload.get("userEmail"),
+            "user_id": payload.get("sub"),
+            "scopes": payload.get("scope", "").split(),
+            "payload": payload,
+            "user_data": user_data
+        }
+    except Exception as e:
+        logger.error(f"Error getting user info: {e}")
+        raise

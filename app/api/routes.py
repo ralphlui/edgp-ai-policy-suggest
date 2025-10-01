@@ -490,7 +490,7 @@ async def get_domain_from_vectordb(domain_name: str):
         # Query for specific domain
         query = {
             "query": {
-                "term": {"metadata.domain.keyword": domain_name}
+                "term": {"metadata.domain": domain_name}
             },
             "size": 100,
             "_source": ["column_name", "metadata", "sample_values"]

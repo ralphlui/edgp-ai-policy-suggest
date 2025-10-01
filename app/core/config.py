@@ -16,6 +16,39 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+def load_environment_config():
+    """
+    Load environment configuration based on APP_ENV
+    Priority: APP_ENV -> .env.{APP_ENV} -> fallback to .env.development -> .env
+    """
+    app_env = os.getenv("APP_ENV", "development")
+    env_file_path = f".env.{app_env}"
+    
+    logger.info(f" Initializing environment: {app_env}")
+    
+    # Check if the environment file exists
+    if os.path.exists(env_file_path):
+        logger.info(f" Loading environment from: {env_file_path}")
+        load_dotenv(dotenv_path=env_file_path, override=True)
+    else:
+        logger.warning(f" Environment file {env_file_path} not found")
+        # Try fallback to .env.development
+        fallback_env = ".env.development"
+        if os.path.exists(fallback_env):
+            logger.info(f" Falling back to: {fallback_env}")
+            load_dotenv(dotenv_path=fallback_env, override=True)
+            app_env = "development"  # Update the env variable
+        else:
+            logger.warning(" No environment files found, using system environment variables only")
+    
+    # Also load a base .env file if it exists (for common settings)
+    base_env_file = ".env"
+    if os.path.exists(base_env_file):
+        logger.info(f"📁 Loading base environment from: {base_env_file}")
+        load_dotenv(dotenv_path=base_env_file, override=False)  # Don't override specific env settings
+    
+    return app_env, env_file_path
+
 def get_secret_from_aws(secret_name: str, region_name: str) -> str:
     """
     Retrieve a secret from AWS Secrets Manager
@@ -35,7 +68,7 @@ def get_secret_from_aws(secret_name: str, region_name: str) -> str:
             region_name=region_name
         )
         
-        logger.info(f"🔍 Attempting to retrieve secret: {secret_name}")
+        logger.info(f" Attempting to retrieve secret: {secret_name}")
         
         response = client.get_secret_value(SecretId=secret_name)
         
@@ -46,56 +79,51 @@ def get_secret_from_aws(secret_name: str, region_name: str) -> str:
             if isinstance(secret_data, dict):
                 # Look for the specific AI agent API key first
                 if 'ai_agent_api_key' in secret_data:
-                    logger.info(f"✅ Successfully retrieved 'ai_agent_api_key' from secret: {secret_name}")
+                    logger.info(f" Successfully retrieved 'ai_agent_api_key' from secret: {secret_name}")
                     return secret_data['ai_agent_api_key']
                 # Try other common key names as fallback
                 for key in ['OPENAI_API_KEY', 'openai_api_key', 'api_key', 'key']:
                     if key in secret_data:
-                        logger.info(f"✅ Successfully retrieved '{key}' from secret: {secret_name}")
+                        logger.info(f" Successfully retrieved '{key}' from secret: {secret_name}")
                         return secret_data[key]
                 # If no standard key found, log available keys and return None
                 available_keys = list(secret_data.keys())
-                logger.error(f"❌ AI agent API key not found in secret. Available keys: {available_keys}")
+                logger.error(f" AI agent API key not found in secret. Available keys: {available_keys}")
                 logger.error(f"   Expected key: 'ai_agent_api_key'")
                 return None
             else:
                 # If it's a plain string
-                logger.info(f"✅ Successfully retrieved secret: {secret_name}")
+                logger.info(f" Successfully retrieved secret: {secret_name}")
                 return secret_data
         elif 'SecretBinary' in response:
             # Handle binary secrets if needed
-            logger.info(f"✅ Successfully retrieved binary secret: {secret_name}")
+            logger.info(f" Successfully retrieved binary secret: {secret_name}")
             return response['SecretBinary'].decode('utf-8')
         
-        logger.warning(f"⚠️ Secret {secret_name} retrieved but no valid content found")
+        logger.warning(f" Secret {secret_name} retrieved but no valid content found")
         return None
         
     except ClientError as e:
         error_code = e.response['Error']['Code']
         if error_code == 'DecryptionFailureException':
-            logger.error(f"❌ Failed to decrypt secret {secret_name}: {e}")
+            logger.error(f" Failed to decrypt secret {secret_name}: {e}")
         elif error_code == 'InternalServiceErrorException':
-            logger.error(f"❌ AWS Secrets Manager internal error for {secret_name}: {e}")
+            logger.error(f" AWS Secrets Manager internal error for {secret_name}: {e}")
         elif error_code == 'InvalidParameterException':
-            logger.error(f"❌ Invalid parameter for secret {secret_name}: {e}")
+            logger.error(f" Invalid parameter for secret {secret_name}: {e}")
         elif error_code == 'InvalidRequestException':
-            logger.error(f"❌ Invalid request for secret {secret_name}: {e}")
+            logger.error(f" Invalid request for secret {secret_name}: {e}")
         elif error_code == 'ResourceNotFoundException':
-            logger.error(f"❌ Secret {secret_name} not found in AWS Secrets Manager")
+            logger.error(f" Secret {secret_name} not found in AWS Secrets Manager")
         else:
-            logger.error(f"❌ Unexpected error retrieving secret {secret_name}: {e}")
+            logger.error(f" Unexpected error retrieving secret {secret_name}: {e}")
         return None
     except Exception as e:
-        logger.error(f"❌ Unexpected error retrieving secret {secret_name}: {e}")
+        logger.error(f" Unexpected error retrieving secret {secret_name}: {e}")
         return None
 
-# Dynamic env loader: .env.development, .env.production, etc.
-# Kubernetes will inject values into .env files, and our app reads from those files
-env = os.getenv("ENVIRONMENT", "development")
-env_file_path = f".env.{env}"
-
-logger.info(f"📁 Loading environment from: {env_file_path}")
-load_dotenv(dotenv_path=env_file_path)
+# Load environment configuration using APP_ENV
+app_env, env_file_path = load_environment_config()
 
 # Configuration for AWS Secrets Manager - read from .env files
 OPENAI_SECRET_NAME = os.getenv("OPENAI_SECRET_NAME", "test/edgp/secret2")
@@ -142,7 +170,8 @@ if RULE_MICROSERVICE_URL and RULE_MICROSERVICE_URL.startswith("{") and RULE_MICR
 # Log configuration status
 if OPENAI_API_KEY:
     logger.info("✅ Configuration Status:")
-    logger.info(f"   Environment: {env}")
+    logger.info(f"   Environment: {app_env}")
+    logger.info(f"   Environment file: {env_file_path}")
     logger.info(f"   Secret Name: {OPENAI_SECRET_NAME}")
     logger.info(f"   Key starts with: {OPENAI_API_KEY[:8]}...")
 else:
@@ -155,7 +184,7 @@ class Settings(BaseSettings):
     """
     
     model_config = ConfigDict(
-        env_file=env_file_path,
+        env_file=[env_file_path, ".env"] if os.path.exists(env_file_path) else [".env"],
         env_file_encoding='utf-8',
         case_sensitive=False,
         extra='ignore'
@@ -164,7 +193,7 @@ class Settings(BaseSettings):
     # Server Configuration
     host: str = Field(default="localhost", alias="HOST")
     port: int = Field(default=8091, alias="PORT")
-    environment: str = Field(default="development", alias="ENVIRONMENT")
+    environment: str = Field(default=app_env, alias="ENVIRONMENT")
     
     # API Configuration
     api_title: str = Field(default="EDGP Policy Suggestion API", alias="API_TITLE")
@@ -229,6 +258,8 @@ settings = Settings()
 
 # Log settings validation
 logger.info("🔧 Settings validation:")
+logger.info(f"   APP_ENV: {app_env}")
+logger.info(f"   Environment file loaded: {env_file_path if os.path.exists(env_file_path) else 'None'}")
 logger.info(f"   JWT public key configured: {'Yes' if settings.jwt_public_key else 'No'}")
 logger.info(f"   Admin API URL: {settings.admin_api_url}")
 logger.info(f"   Rule API URL: {settings.rule_api_url}")

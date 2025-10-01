@@ -255,3 +255,21 @@ class OpenSearchColumnStore:
         except Exception as e:
             logger.error(f"Error searching for domain {domain}: {e}")
             return []
+
+# Global store instance for backward compatibility with tests
+_store_instance = None
+
+def get_store(index_name: str = "edgp-ai-policy-suggest-column-index") -> Optional[OpenSearchColumnStore]:
+    """
+    Get or create a global OpenSearchColumnStore instance.
+    This function exists for backward compatibility with existing tests.
+    """
+    global _store_instance
+    if _store_instance is None:
+        try:
+            _store_instance = OpenSearchColumnStore(index_name=index_name)
+            logger.info(f"Created global column store instance with index: {index_name}")
+        except Exception as e:
+            logger.error(f"Failed to create global column store: {e}")
+            return None
+    return _store_instance

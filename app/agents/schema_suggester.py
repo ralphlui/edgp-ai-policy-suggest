@@ -85,3 +85,9 @@ def bootstrap_schema_for_domain(domain: str) -> Dict[str, Any]:
     result = format_llm_schema(raw)
     logger.info(f"Bootstrap result: {result}")
     return result
+
+def bootstrap_schema(domain: str) -> Dict[str, Any]:
+    """
+    Alias for bootstrap_schema_for_domain - for backward compatibility with tests
+    """
+    return bootstrap_schema_for_domain(domain)
