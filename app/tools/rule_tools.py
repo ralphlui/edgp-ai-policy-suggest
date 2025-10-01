@@ -1,6 +1,6 @@
 from langchain.agents import tool
 from langchain_community.chat_models import ChatOpenAI
-from app.core.config import OPENAI_API_KEY, RULE_MICROSERVICE_URL
+from app.core.config import OPENAI_API_KEY, RULE_MICROSERVICE_URL, settings
 import json, re, requests
 import logging
 
@@ -45,9 +45,9 @@ def fetch_gx_rules(query: str = "") -> list:
 @tool
 def suggest_column_rules(data_schema: dict, gx_rules: list) -> str:
     """Use LLM to suggest GX rules per column."""
-
-    llm = ChatOpenAI(model="gpt-4o-mini", openai_api_key=OPENAI_API_KEY, temperature=0.2)
-
+    
+    llm = ChatOpenAI(model=settings.rules_llm_model, openai_api_key=OPENAI_API_KEY, temperature=settings.llm_temperature)
+    
     prompt = f"""
     You are a data governance expert. Given this schema:
     {json.dumps(data_schema, indent=2)}
@@ -87,7 +87,7 @@ def suggest_column_rules(data_schema: dict, gx_rules: list) -> str:
 def suggest_column_names_only(domain: str) -> list:
     """Use LLM to suggest CSV column names only (no data types) for a domain not found in vector DB."""
     
-    llm = ChatOpenAI(model="gpt-4o-mini", openai_api_key=OPENAI_API_KEY, temperature=0.2)
+    llm = ChatOpenAI(model=settings.rules_llm_model, openai_api_key=OPENAI_API_KEY, temperature=settings.llm_temperature)
 
     prompt = f"""
     You are a data architect helping suggest CSV column names for a new domain called '{domain}'.

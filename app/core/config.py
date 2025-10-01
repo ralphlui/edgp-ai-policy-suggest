@@ -142,9 +142,9 @@ if USE_AWS_SECRETS:
         OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
         
         if OPENAI_API_KEY:
-            logger.info("✅ Using OPENAI_API_KEY from environment variable as fallback")
+            logger.info(" Using OPENAI_API_KEY from environment variable as fallback")
         else:
-            logger.error("❌ AI agent API key not available from either:")
+            logger.error(" AI agent API key not available from either:")
             logger.error(f"   1. AWS Secrets Manager: {OPENAI_SECRET_NAME}")
             logger.error("   2. Environment variable: OPENAI_API_KEY")
             logger.error("   Please ensure:")
@@ -153,29 +153,29 @@ if USE_AWS_SECRETS:
             logger.error(f"   - OR set OPENAI_API_KEY environment variable for testing")
             raise Exception(f"AI agent API key not available")
 else:
-    logger.warning("⚠️ AWS Secrets Manager is disabled (USE_AWS_SECRETS=false)")
-    logger.info("🔐 Using OPENAI_API_KEY from environment variable...")
+    logger.warning(" AWS Secrets Manager is disabled (USE_AWS_SECRETS=false)")
+    logger.info(" Using OPENAI_API_KEY from environment variable...")
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     
     if not OPENAI_API_KEY:
-        logger.error("❌ OPENAI_API_KEY environment variable is not set")
+        logger.error(" OPENAI_API_KEY environment variable is not set")
         raise Exception("AI agent API key must be provided via OPENAI_API_KEY environment variable when AWS Secrets Manager is disabled")
 
 RULE_MICROSERVICE_URL = os.getenv("rule.api.url")
 
 if RULE_MICROSERVICE_URL and RULE_MICROSERVICE_URL.startswith("{") and RULE_MICROSERVICE_URL.endswith("}"):
-    logger.warning(f"⚠️ RULE_MICROSERVICE_URL contains placeholder value: {RULE_MICROSERVICE_URL}")
+    logger.warning(f" RULE_MICROSERVICE_URL contains placeholder value: {RULE_MICROSERVICE_URL}")
     RULE_MICROSERVICE_URL = "http://localhost:8090/api/rules"  # Default fallback
 
 # Log configuration status
 if OPENAI_API_KEY:
-    logger.info("✅ Configuration Status:")
+    logger.info(" Configuration Status:")
     logger.info(f"   Environment: {app_env}")
     logger.info(f"   Environment file: {env_file_path}")
     logger.info(f"   Secret Name: {OPENAI_SECRET_NAME}")
     logger.info(f"   Key starts with: {OPENAI_API_KEY[:8]}...")
 else:
-    logger.error("❌ OPENAI_API_KEY is not available - service cannot start")
+    logger.error(" OPENAI_API_KEY is not available - service cannot start")
 
 class Settings(BaseSettings):
     """
@@ -217,6 +217,11 @@ class Settings(BaseSettings):
     embed_model: str = Field(default="text-embedding-3-small", alias="EMBED_MODEL")
     embed_dim: int = Field(default=1536, alias="EMBED_DIM")
     
+    # LLM Model Configuration
+    schema_llm_model: str = Field(default="gpt-4", alias="SCHEMA_LLM_MODEL")
+    rules_llm_model: str = Field(default="gpt-4o-mini", alias="RULES_LLM_MODEL")
+    llm_temperature: float = Field(default=0.3, alias="LLM_TEMPERATURE")
+    
     # JWT Authentication Settings
     jwt_public_key: str = Field(alias="jwt.public.key")
     jwt_algorithm: str = "RS256"
@@ -257,7 +262,7 @@ class Settings(BaseSettings):
 settings = Settings()
 
 # Log settings validation
-logger.info("🔧 Settings validation:")
+logger.info(" Settings validation:")
 logger.info(f"   APP_ENV: {app_env}")
 logger.info(f"   Environment file loaded: {env_file_path if os.path.exists(env_file_path) else 'None'}")
 logger.info(f"   JWT public key configured: {'Yes' if settings.jwt_public_key else 'No'}")

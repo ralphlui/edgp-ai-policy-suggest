@@ -164,7 +164,7 @@ async def create_domain(
 ):
     try:
         # Log authenticated user information
-        logger.info(f"🔐 Create domain request from user: {user.email} with scopes: {user.scopes}")
+        logger.info(f" Create domain request from user: {user.email} with scopes: {user.scopes}")
         
         # Validate required fields
         if "domain" not in payload:
@@ -388,7 +388,7 @@ async def create_domain(
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@router.get("/api/aips/vectordb/status")
+@router.get("/api/aips/vector/status")
 async def check_vectordb_status():
     """Check vector database connection and index status."""
     try:
@@ -430,7 +430,7 @@ async def check_vectordb_status():
         }, status_code=500)
 
 
-@router.get("/api/aips/vectordb/domains")
+@router.get("/api/aips/domains")
 async def list_domains_in_vectordb():
     """List all domains stored in the vector database."""
     try:
@@ -477,7 +477,7 @@ async def list_domains_in_vectordb():
         }, status_code=500)
 
 
-@router.get("/api/aips/vectordb/domain/{domain_name}")
+@router.get("/api/aips/domain/{domain_name}")
 async def get_domain_from_vectordb(domain_name: str):
     """Get specific domain details from vector database."""
     try:

@@ -4,7 +4,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
 from langchain_openai import ChatOpenAI
 from app.vector_db.schema_loader import validate_column_schema
-from app.core.config import OPENAI_API_KEY
+from app.core.config import OPENAI_API_KEY, settings
 import logging
 
 logger = logging.getLogger(__name__)
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # Initialize model and parser lazily
 def get_model_chain() -> Runnable:
     """Lazy initialization of ChatOpenAI model and chain"""
-    model = ChatOpenAI(model="gpt-4", temperature=0.3, openai_api_key=OPENAI_API_KEY)
+    model = ChatOpenAI(model=settings.schema_llm_model, temperature=settings.llm_temperature, openai_api_key=OPENAI_API_KEY)
     parser = JsonOutputParser()
     
     # Prompt template
