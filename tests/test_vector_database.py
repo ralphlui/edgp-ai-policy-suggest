@@ -862,6 +862,65 @@ def create_mock_column_schema(name="test_col", dtype="string"):
     }
 
 
+def test_case_insensitive_domain_validation():
+    """Test case-insensitive domain validation functionality"""
+    try:
+        from app.aoss.column_store import OpenSearchColumnStore
+        from app.core.config import settings
+    except ImportError:
+        pytest.skip("Required modules not available")
+    
+    # Mock the OpenSearch client to simulate case-insensitive domain checking
+    with patch('app.aoss.column_store.create_aoss_client') as mock_client_factory:
+        # Create a mock OpenSearch client
+        mock_client = Mock()
+        mock_client_factory.return_value = mock_client
+        
+        # Mock index exists
+        mock_client.indices.exists.return_value = True
+        
+        # Mock search response for get_all_domains - simulate existing 'customer' domain
+        mock_search_response = {
+            "aggregations": {
+                "unique_domains": {
+                    "buckets": [
+                        {"key": "customer", "doc_count": 5}
+                    ]
+                }
+            }
+        }
+        mock_client.search.return_value = mock_search_response
+        
+        # Create store instance
+        store = OpenSearchColumnStore(index_name="test-index")
+        
+        # Test cases for domain conflict detection
+        test_cases = [
+            ("customer", True, "customer"),    # Exact match
+            ("Customer", True, "customer"),    # Case difference
+            ("CUSTOMER", True, "customer"),    # All caps
+            ("CuStOmEr", True, "customer"),    # Mixed case
+            ("product", False, None),          # New domain
+            ("PRODUCT", False, None),          # New domain (caps)
+        ]
+        
+        for input_domain, should_exist, expected_existing in test_cases:
+            result = store.check_domain_exists_case_insensitive(input_domain)
+            
+            assert result["exists"] == should_exist, f"Domain '{input_domain}' existence check failed"
+            
+            if should_exist:
+                assert result["existing_domain"] == expected_existing, f"Expected existing domain '{expected_existing}' for input '{input_domain}'"
+                assert "requested_domain" in result
+                
+                # Check if case conflict is detected correctly
+                is_case_conflict = result["existing_domain"] != input_domain
+                if input_domain.lower() == expected_existing.lower() and input_domain != expected_existing:
+                    assert is_case_conflict, f"Case conflict should be detected for '{input_domain}' vs '{expected_existing}'"
+            else:
+                assert result["existing_domain"] is None, f"No existing domain should be found for '{input_domain}'"
+
+
 # ==========================================================================
 # MAIN EXECUTION FOR MANUAL TESTING
 # ==========================================================================
@@ -878,6 +937,14 @@ def run_manual_tests():
         # Test schema loader structure
         manual_test_schema_loader_mock()
         
+        # Test case-insensitive domain validation
+        print("\n🔍 Testing case-insensitive domain validation...")
+        try:
+            test_case_insensitive_domain_validation()
+            print("✅ Case-insensitive domain validation tests passed")
+        except Exception as e:
+            print(f"❌ Case-insensitive domain validation test failed: {e}")
+        
         # Test live endpoints if requests is available
         if 'requests' in sys.modules or IMPORTS_AVAILABLE:
             try:
@@ -890,6 +957,7 @@ def run_manual_tests():
         print("🔍 This consolidated file combines functionality from:")
         print("   - test_vector_fix.py (live API endpoint testing)")
         print("   - test_vector_db_schema_loader.py (schema loading and validation)")
+        print("   - Case-insensitive domain validation testing")
         print("=" * 60)
         
     except Exception as e:

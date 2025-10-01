@@ -255,6 +255,36 @@ class OpenSearchColumnStore:
         except Exception as e:
             logger.error(f"Error searching for domain {domain}: {e}")
             return []
+    
+    def check_domain_exists_case_insensitive(self, domain: str) -> Dict[str, Any]:
+        """
+        Check if a domain exists with case-insensitive matching.
+        
+        Returns:
+            Dict with 'exists' boolean and 'existing_domain' string if found
+        """
+        try:
+            # First check if index exists
+            if not self.client.indices.exists(index=self.index_name):
+                return {"exists": False, "existing_domain": None}
+            
+            # Get all unique domains and check case-insensitively
+            all_domains = self.get_all_domains()
+            domain_lower = domain.lower()
+            
+            for existing_domain in all_domains:
+                if existing_domain.lower() == domain_lower:
+                    return {
+                        "exists": True,
+                        "existing_domain": existing_domain,
+                        "requested_domain": domain
+                    }
+            
+            return {"exists": False, "existing_domain": None}
+            
+        except Exception as e:
+            logger.error(f"Error checking domain existence for {domain}: {e}")
+            return {"exists": False, "existing_domain": None}
 
     def get_all_domains(self) -> List[str]:
         """
@@ -264,6 +294,11 @@ class OpenSearchColumnStore:
             List of unique domain names
         """
         try:
+            # First check if index exists
+            if not self.client.indices.exists(index=self.index_name):
+                logger.info(f"Index {self.index_name} does not exist yet")
+                return []
+            
             # Use aggregation to get unique domains
             query = {
                 "size": 0,  # We don't need the actual documents, just aggregation results
@@ -286,6 +321,33 @@ class OpenSearchColumnStore:
             
         except Exception as e:
             logger.error(f"Error getting all domains: {e}")
+            return []
+
+    def get_all_domains_realtime(self, force_refresh: bool = True) -> List[str]:
+        """
+        Get all unique domain names with real-time visibility of recently created domains.
+        
+        Args:
+            force_refresh: Whether to force refresh the index before querying
+        
+        Returns:
+            List of unique domain names
+        """
+        try:
+            # First check if index exists
+            if not self.client.indices.exists(index=self.index_name):
+                logger.info(f"Index {self.index_name} does not exist yet")
+                return []
+            
+            # Force refresh to see recently added documents
+            if force_refresh:
+                self.force_refresh_index()
+            
+            # Use the standard get_all_domains method
+            return self.get_all_domains()
+            
+        except Exception as e:
+            logger.error(f"Error getting all domains (realtime): {e}")
             return []
 
 # Global store instance for backward compatibility with tests

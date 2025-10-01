@@ -173,21 +173,39 @@ async def create_domain(
                 "message": "The 'domain' field is required in the request payload."
             }, status_code=400)
         
-        domain = payload["domain"]
+        domain = payload["domain"].strip()
         
-        # Check if domain already exists
+        # Normalize domain to lowercase for consistency
+        normalized_domain = domain.lower()
+        
+        # Check if domain already exists (case-insensitive)
         store = get_store()
         if store is not None:
             try:
-                existing_columns = store.get_columns_by_domain(domain)
-                if existing_columns:
+                domain_check = store.check_domain_exists_case_insensitive(domain)
+                if domain_check["exists"]:
+                    existing_domain = domain_check["existing_domain"]
+                    existing_columns = store.get_columns_by_domain(existing_domain)
+                    
+                    # Determine if it's exact match or case difference
+                    if existing_domain == normalized_domain:
+                        message = f"Domain '{domain}' already exists"
+                        note = "Domain was not created because it already exists in the database"
+                    else:
+                        message = f"Domain '{domain}' conflicts with existing domain '{existing_domain}' (case-insensitive)"
+                        note = f"Domain creation blocked due to case-insensitive conflict. Existing domain: '{existing_domain}'. All domains are stored in lowercase."
+                    
                     return JSONResponse({
-                        "message": f"Domain '{domain}' already exists",
+                        "message": message,
                         "status": "exists", 
+                        "existing_domain": existing_domain,
+                        "requested_domain": domain,
+                        "normalized_domain": normalized_domain,
                         "existing_columns": [col.get("column_name") for col in existing_columns],
                         "column_count": len(existing_columns),
-                        "note": "Domain was not created because it already exists in the database"
-                    }, status_code=200)
+                        "note": note,
+                        "case_conflict": existing_domain != normalized_domain
+                    }, status_code=409)  # 409 Conflict status for duplicate/conflicting resource
             except Exception as e:
                 logger.warning(f"Failed to check if domain exists: {e}")
                 # Continue with creation if we can't check (don't fail on this)
@@ -261,20 +279,29 @@ async def create_domain(
                     col_type = col_info.get("type", col_info.get("dtype", "string"))
                     
                     docs.append(ColumnDoc(
-                        column_id=f"{domain}.{col_name}",
+                        column_id=f"{normalized_domain}.{col_name}",
                         column_name=col_name,
                         embedding=embeddings[i],
                         sample_values=[],  # Don't store sample values in vector DB
                         metadata={
-                            "domain": domain,
+                            "domain": normalized_domain,
                             "type": col_type,
                             "pii": False,
-                            "table": domain,
-                            "source": "synthetic"
+                            "table": normalized_domain,
+                            "source": "synthetic",
+                            "original_domain_input": domain  # Keep track of original input for reference
                         }
                     ))
                 store.upsert_columns(docs)
-                logger.info(f"Successfully stored {len(docs)} columns for domain {domain} (column names only, no sample values)")
+                logger.info(f"Successfully stored {len(docs)} columns for domain {normalized_domain} (original: {domain}) - column names only, no sample values")
+                
+                # Force refresh index to make new domain immediately visible
+                refresh_success = store.force_refresh_index()
+                if refresh_success:
+                    logger.info(f"Index refreshed successfully - domain {normalized_domain} should be immediately visible")
+                else:
+                    logger.warning(f"Index refresh failed - domain {normalized_domain} may take a few seconds to appear in lists")
+                
                 storage_success = True
             except Exception as e:
                 logger.warning(f"Failed to store columns in vector DB: {e}")
@@ -361,7 +388,7 @@ async def create_domain(
             buffer.seek(0)
 
             # Add warning header if storage failed
-            headers = {"Content-Disposition": f"attachment; filename={domain}_schema.csv"}
+            headers = {"Content-Disposition": f"attachment; filename={normalized_domain}_schema.csv"}
             if not storage_success:
                 headers["X-Storage-Warning"] = "Vector database storage failed - schema not saved"
 
@@ -372,10 +399,25 @@ async def create_domain(
             )
 
         # JSON response with storage status
-        response_data = {"message": f"Schema for domain '{domain}' processed successfully."}
+        response_data = {"message": f"Schema for domain '{domain}' processed successfully and stored as '{normalized_domain}'."}
         
         if storage_success:
             response_data["storage_status"] = "saved"
+            response_data["stored_domain"] = normalized_domain
+            response_data["original_domain"] = domain
+            
+            # Verify domain is immediately visible (for debugging)
+            try:
+                immediate_domains = store.get_all_domains_realtime(force_refresh=True)
+                response_data["domain_immediately_visible"] = normalized_domain in immediate_domains
+                response_data["available_domains"] = immediate_domains
+                if normalized_domain in immediate_domains:
+                    response_data["note"] = "Domain created and immediately visible in domain list"
+                else:
+                    response_data["note"] = "Domain created but may take a few seconds to appear in domain list due to indexing delays"
+            except Exception as e:
+                logger.warning(f"Could not verify immediate domain visibility: {e}")
+                response_data["note"] = "Domain created successfully"
         else:
             response_data["storage_status"] = "failed"
             response_data["storage_error"] = storage_error
@@ -407,14 +449,15 @@ async def get_domains(
                 "data": []
             }, status_code=503)
         
-        # Get all unique domains from the vector database
-        domains = store.get_all_domains()
+        # Get all unique domains from the vector database (with real-time refresh)
+        domains = store.get_all_domains_realtime(force_refresh=True)
         
         return JSONResponse({
             "success": True,
             "message": f"Successfully retrieved all domain{'s' if len(domains) != 1 else ''}.",
             "totalRecord": len(domains),
-            "data": domains
+            "data": domains,
+            "note": "Real-time domain list with forced index refresh"
         })
         
     except Exception as e:
@@ -456,9 +499,19 @@ async def check_vectordb_status():
         
         if index_exists:
             # Get index stats
-            stats = client.indices.stats(index=index_name)
-            result["document_count"] = stats["indices"][index_name]["total"]["docs"]["count"]
-            result["index_size"] = stats["indices"][index_name]["total"]["store"]["size_in_bytes"]
+            try:
+                stats = client.indices.stats(index=index_name)
+                result["document_count"] = stats["indices"][index_name]["total"]["docs"]["count"]
+                result["index_size"] = stats["indices"][index_name]["total"]["store"]["size_in_bytes"]
+            except Exception as stats_error:
+                logger.warning(f"Could not get index stats: {stats_error}")
+                result["document_count"] = "unknown"
+                result["index_size"] = "unknown"
+                result["stats_error"] = str(stats_error)
+        else:
+            result["document_count"] = 0
+            result["index_size"] = 0
+            result["note"] = "Index does not exist yet. It will be created when first data is added."
         
         return JSONResponse(result)
         
@@ -480,6 +533,15 @@ async def list_domains_in_vectordb():
             return JSONResponse({
                 "error": "OpenSearch store not available"
             }, status_code=503)
+        
+        # Check if index exists first
+        if not store.client.indices.exists(index=store.index_name):
+            return JSONResponse({
+                "total_domains": 0,
+                "total_columns": 0,
+                "domains": {},
+                "message": f"Index {store.index_name} does not exist yet"
+            })
         
         # Query all documents and group by domain
         query = {
@@ -527,6 +589,14 @@ async def get_domain_from_vectordb(domain_name: str):
             return JSONResponse({
                 "error": "OpenSearch store not available"
             }, status_code=503)
+        
+        # Check if index exists first
+        if not store.client.indices.exists(index=store.index_name):
+            return JSONResponse({
+                "domain": domain_name,
+                "found": False,
+                "message": f"Index {store.index_name} does not exist yet"
+            }, status_code=404)
         
         # Query for specific domain
         query = {
