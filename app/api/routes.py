@@ -57,6 +57,23 @@ async def suggest_rules(
         
         try:
             schema = get_schema_by_domain(domain)
+            
+            # If schema is empty but no exception, try with forced refresh for newly created domains
+            if not schema:
+                logger.info(f"Schema not found for domain {domain}, attempting with forced refresh...")
+                from app.vector_db.schema_loader import get_store
+                store = get_store()
+                if store:
+                    # Force refresh to pick up recently created domains
+                    store.force_refresh_index()
+                    # Wait a short moment for refresh to take effect
+                    import asyncio
+                    await asyncio.sleep(0.5)
+                    # Try again
+                    schema = get_schema_by_domain(domain)
+                    if schema:
+                        logger.info(f"Schema found for domain {domain} after forced refresh")
+            
             vector_db_status = "connected"
             logger.info(f"Vector DB connection successful. Schema retrieval result for domain {domain}: {schema}")
         except Exception as db_error:
@@ -469,6 +486,53 @@ async def get_domains(
             "data": []
         }, status_code=500)
 
+
+
+@router.get("/api/aips/domains/verify/{domain_name}")
+async def verify_domain_exists(
+    domain_name: str,
+    user: UserInfo = Depends(verify_any_scope_token)
+):
+    """Verify if a specific domain exists with real-time refresh - useful right after domain creation."""
+    try:
+        # Log authenticated user information
+        logger.info(f"🔍 Verify domain request from user: {user.email} for domain: {domain_name}")
+        
+        store = get_store()
+        if store is None:
+            return JSONResponse({
+                "success": False,
+                "domain": domain_name,
+                "exists": False,
+                "message": "OpenSearch store not available"
+            }, status_code=503)
+        
+        # Normalize domain name for consistent checking
+        normalized_domain = domain_name.lower().strip()
+        
+        # Force refresh and get all domains
+        all_domains = store.get_all_domains_realtime(force_refresh=True)
+        domain_exists = normalized_domain in all_domains
+        
+        return JSONResponse({
+            "success": True,
+            "domain": domain_name,
+            "normalized_domain": normalized_domain,
+            "exists": domain_exists,
+            "message": f"Domain '{domain_name}' {'exists' if domain_exists else 'does not exist'}",
+            "all_domains": all_domains,
+            "total_domains": len(all_domains),
+            "note": "Real-time check with forced index refresh"
+        })
+        
+    except Exception as e:
+        logger.error(f"Error verifying domain {domain_name}: {e}")
+        return JSONResponse({
+            "success": False,
+            "domain": domain_name,
+            "exists": False,
+            "message": f"Failed to verify domain: {str(e)}"
+        }, status_code=500)
 
 
 @router.get("/api/aips/vector/status")

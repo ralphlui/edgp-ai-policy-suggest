@@ -286,6 +286,32 @@ class OpenSearchColumnStore:
             logger.error(f"Error checking domain existence for {domain}: {e}")
             return {"exists": False, "existing_domain": None}
 
+    def force_refresh_index(self) -> bool:
+        """
+        Force refresh the OpenSearch index to make recently indexed documents 
+        immediately available for search. This is particularly useful for 
+        OpenSearch Serverless which has eventual consistency.
+        
+        Note: OpenSearch Serverless doesn't support _refresh endpoint,
+        so this will gracefully fail and rely on eventual consistency.
+        
+        Returns:
+            bool: True if refresh succeeded, False otherwise
+        """
+        try:
+            if self.client.indices.exists(index=self.index_name):
+                # Try to refresh, but expect it to fail in OpenSearch Serverless
+                self.client.indices.refresh(index=self.index_name)
+                logger.info(f"Successfully refreshed index: {self.index_name}")
+                return True
+            else:
+                logger.warning(f"Cannot refresh - index {self.index_name} does not exist")
+                return False
+        except Exception as e:
+            # This is expected for OpenSearch Serverless - just log as debug
+            logger.debug(f"Index refresh not supported (expected for OpenSearch Serverless): {e}")
+            return False
+
     def get_all_domains(self) -> List[str]:
         """
         Get all unique domain names from the vector database.
@@ -328,7 +354,7 @@ class OpenSearchColumnStore:
         Get all unique domain names with real-time visibility of recently created domains.
         
         Args:
-            force_refresh: Whether to force refresh the index before querying
+            force_refresh: Whether to attempt refresh the index before querying
         
         Returns:
             List of unique domain names
@@ -339,7 +365,8 @@ class OpenSearchColumnStore:
                 logger.info(f"Index {self.index_name} does not exist yet")
                 return []
             
-            # Force refresh to see recently added documents
+            # Try to refresh to see recently added documents
+            # This may fail in OpenSearch Serverless, which is expected
             if force_refresh:
                 self.force_refresh_index()
             
@@ -348,7 +375,8 @@ class OpenSearchColumnStore:
             
         except Exception as e:
             logger.error(f"Error getting all domains (realtime): {e}")
-            return []
+            # Fall back to regular get_all_domains
+            return self.get_all_domains()
 
 # Global store instance for backward compatibility with tests
 _store_instance = None
