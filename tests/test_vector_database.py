@@ -921,6 +921,474 @@ def test_case_insensitive_domain_validation():
                 assert result["existing_domain"] is None, f"No existing domain should be found for '{input_domain}'"
 
 
+def test_force_refresh_index():
+    """Test force_refresh_index functionality"""
+    try:
+        from app.aoss.column_store import OpenSearchColumnStore
+    except ImportError:
+        pytest.skip("Required modules not available")
+    
+    with patch('app.aoss.column_store.create_aoss_client') as mock_client_factory:
+        mock_client = Mock()
+        mock_client_factory.return_value = mock_client
+        
+        store = OpenSearchColumnStore(index_name="test-index")
+        
+        # Test successful refresh
+        mock_client.indices.exists.return_value = True
+        mock_client.indices.refresh.return_value = {"acknowledged": True}
+        
+        result = store.force_refresh_index()
+        assert result == True, "Should return True for successful refresh"
+        mock_client.indices.refresh.assert_called_once_with(index="test-index")
+        
+        # Test refresh when index doesn't exist
+        mock_client.reset_mock()
+        mock_client.indices.exists.return_value = False
+        
+        result = store.force_refresh_index()
+        assert result == False, "Should return False when index doesn't exist"
+        mock_client.indices.refresh.assert_not_called()
+        
+        # Test refresh failure (OpenSearch Serverless scenario)
+        mock_client.reset_mock()
+        mock_client.indices.exists.return_value = True
+        mock_client.indices.refresh.side_effect = Exception("Not supported")
+        
+        result = store.force_refresh_index()
+        assert result == False, "Should return False when refresh fails"
+
+
+def test_get_all_domains_realtime():
+    """Test get_all_domains_realtime functionality"""
+    try:
+        from app.aoss.column_store import OpenSearchColumnStore
+    except ImportError:
+        pytest.skip("Required modules not available")
+    
+    with patch('app.aoss.column_store.create_aoss_client') as mock_client_factory:
+        mock_client = Mock()
+        mock_client_factory.return_value = mock_client
+        
+        # Mock successful responses
+        mock_client.indices.exists.return_value = True
+        mock_search_response = {
+            "aggregations": {
+                "unique_domains": {
+                    "buckets": [
+                        {"key": "customer", "doc_count": 5},
+                        {"key": "product", "doc_count": 3}
+                    ]
+                }
+            }
+        }
+        mock_client.search.return_value = mock_search_response
+        
+        store = OpenSearchColumnStore(index_name="test-index")
+        
+        # Test with force refresh enabled (default)
+        with patch.object(store, 'force_refresh_index', return_value=True) as mock_refresh:
+            domains = store.get_all_domains_realtime()
+            assert domains == ["customer", "product"], "Should return sorted domain list"
+            mock_refresh.assert_called_once()
+        
+        # Test with force refresh disabled
+        with patch.object(store, 'force_refresh_index') as mock_refresh:
+            domains = store.get_all_domains_realtime(force_refresh=False)
+            assert domains == ["customer", "product"], "Should return sorted domain list"
+            mock_refresh.assert_not_called()
+        
+        # Test fallback when realtime fails
+        with patch.object(store, 'get_all_domains', return_value=["fallback_domain"]) as mock_fallback:
+            mock_client.indices.exists.side_effect = Exception("Connection error")
+            domains = store.get_all_domains_realtime()
+            assert domains == ["fallback_domain"], "Should fall back to regular get_all_domains"
+            mock_fallback.assert_called_once()
+
+
+def test_get_all_domains():
+    """Test get_all_domains functionality"""
+    try:
+        from app.aoss.column_store import OpenSearchColumnStore
+    except ImportError:
+        pytest.skip("Required modules not available")
+    
+    with patch('app.aoss.column_store.create_aoss_client') as mock_client_factory:
+        mock_client = Mock()
+        mock_client_factory.return_value = mock_client
+        
+        store = OpenSearchColumnStore(index_name="test-index")
+        
+        # Test successful domain retrieval
+        mock_client.indices.exists.return_value = True
+        mock_search_response = {
+            "aggregations": {
+                "unique_domains": {
+                    "buckets": [
+                        {"key": "zebra", "doc_count": 2},
+                        {"key": "alpha", "doc_count": 5},
+                        {"key": "beta", "doc_count": 3}
+                    ]
+                }
+            }
+        }
+        mock_client.search.return_value = mock_search_response
+        
+        domains = store.get_all_domains()
+        assert domains == ["alpha", "beta", "zebra"], "Should return sorted domain list"
+        
+        # Verify the search query structure
+        call_args = mock_client.search.call_args
+        assert call_args[1]["index"] == "test-index"
+        assert call_args[1]["body"]["size"] == 0
+        assert "aggs" in call_args[1]["body"]
+        assert "unique_domains" in call_args[1]["body"]["aggs"]
+        
+        # Test when index doesn't exist
+        mock_client.reset_mock()
+        mock_client.indices.exists.return_value = False
+        
+        domains = store.get_all_domains()
+        assert domains == [], "Should return empty list when index doesn't exist"
+        mock_client.search.assert_not_called()
+        
+        # Test when no domains exist
+        mock_client.reset_mock()
+        mock_client.indices.exists.return_value = True
+        mock_search_response = {
+            "aggregations": {
+                "unique_domains": {
+                    "buckets": []
+                }
+            }
+        }
+        mock_client.search.return_value = mock_search_response
+        
+        domains = store.get_all_domains()
+        assert domains == [], "Should return empty list when no domains exist"
+        
+        # Test error handling
+        mock_client.reset_mock()
+        mock_client.indices.exists.return_value = True
+        mock_client.search.side_effect = Exception("Search error")
+        
+        domains = store.get_all_domains()
+        assert domains == [], "Should return empty list on search error"
+
+
+def test_get_columns_by_domain():
+    """Test get_columns_by_domain functionality"""
+    try:
+        from app.aoss.column_store import OpenSearchColumnStore
+    except ImportError:
+        pytest.skip("Required modules not available")
+    
+    with patch('app.aoss.column_store.create_aoss_client') as mock_client_factory:
+        mock_client = Mock()
+        mock_client_factory.return_value = mock_client
+        
+        store = OpenSearchColumnStore(index_name="test-index")
+        
+        # Mock search response
+        mock_search_response = {
+            "hits": {
+                "hits": [
+                    {
+                        "_source": {
+                            "column_id": "customer.name",
+                            "column_name": "name",
+                            "metadata": {"domain": "customer", "type": "string"},
+                            "sample_values": ["John", "Jane"]
+                        }
+                    },
+                    {
+                        "_source": {
+                            "column_id": "customer.age",
+                            "column_name": "age", 
+                            "metadata": {"domain": "customer", "type": "integer"},
+                            "sample_values": [25, 30]
+                        }
+                    }
+                ]
+            }
+        }
+        mock_client.search.return_value = mock_search_response
+        
+        # Test with default fields
+        results = store.get_columns_by_domain("customer")
+        assert len(results) == 2, "Should return 2 columns"
+        assert results[0]["column_name"] == "name"
+        assert results[1]["column_name"] == "age"
+        
+        # Verify the search query
+        call_args = mock_client.search.call_args
+        assert call_args[1]["index"] == "test-index"
+        query = call_args[1]["body"]["query"]
+        assert query["term"]["metadata.domain"] == "customer"
+        
+        # Test with custom fields
+        store.get_columns_by_domain("customer", return_fields=["column_name", "metadata"])
+        call_args = mock_client.search.call_args
+        assert call_args[1]["body"]["_source"] == ["column_name", "metadata"]
+
+
+def test_column_doc_to_doc():
+    """Test ColumnDoc.to_doc() method"""
+    try:
+        from app.aoss.column_store import ColumnDoc
+    except ImportError:
+        pytest.skip("Required modules not available")
+    
+    # Test basic ColumnDoc creation and serialization
+    doc = ColumnDoc(
+        column_id="test.column",
+        column_name="test_column",
+        embedding=[0.1, 0.2, 0.3],
+        sample_values=["value1", "value2"],
+        metadata={"domain": "test", "type": "string"}
+    )
+    
+    result = doc.to_doc()
+    
+    expected = {
+        "column_id": "test.column",
+        "column_name": "test_column", 
+        "embedding": [0.1, 0.2, 0.3],
+        "sample_values": ["value1", "value2"],
+        "metadata": {"domain": "test", "type": "string"}
+    }
+    
+    assert result == expected, "ColumnDoc.to_doc() should return correct dictionary"
+
+
+def test_opensearch_column_store_initialization():
+    """Test OpenSearchColumnStore initialization"""
+    try:
+        from app.aoss.column_store import OpenSearchColumnStore
+    except ImportError:
+        pytest.skip("Required modules not available")
+    
+    with patch('app.aoss.column_store.create_aoss_client') as mock_client_factory:
+        mock_client = Mock()
+        mock_client_factory.return_value = mock_client
+        
+        # Test with default parameters
+        store = OpenSearchColumnStore(index_name="test-index")
+        assert store.index_name == "test-index"
+        assert store.embedding_dim == 1536  # Default value
+        assert store.client == mock_client
+        
+        # Test with custom parameters
+        store = OpenSearchColumnStore(
+            index_name="custom-index", 
+            embedding_dim=768, 
+            client=mock_client
+        )
+        assert store.index_name == "custom-index"
+        assert store.embedding_dim == 768
+        assert store.client == mock_client
+
+
+def test_upsert_columns():
+    """Test upsert_columns functionality"""
+    try:
+        from app.aoss.column_store import OpenSearchColumnStore, ColumnDoc
+    except ImportError:
+        pytest.skip("Required modules not available")
+    
+    with patch('app.aoss.column_store.create_aoss_client') as mock_client_factory:
+        mock_client = Mock()
+        mock_client_factory.return_value = mock_client
+        
+        # Mock index creation methods
+        mock_client.indices.exists.return_value = False
+        mock_client.indices.create.return_value = {"acknowledged": True}
+        
+        # Use smaller embedding dimension for testing
+        embedding_dim = 3
+        store = OpenSearchColumnStore(index_name="test-index", embedding_dim=embedding_dim)
+        
+        # Test with mismatched embedding dimensions - should raise ValueError
+        wrong_dim_docs = [
+            ColumnDoc(
+                column_id="test.col3",
+                column_name="col3",
+                embedding=[0.1, 0.2],  # Wrong dimension (2 instead of 3)
+                sample_values=["val3"],
+                metadata={"domain": "test"}
+            )
+        ]
+        
+        # Should raise ValueError after retries
+        with pytest.raises(Exception):  # Will be wrapped in RetryError
+            store.upsert_columns(wrong_dim_docs)
+        
+        # Test with empty documents
+        empty_docs = []
+        store.upsert_columns(empty_docs)  # Should not raise exception
+        
+        # Test individual document validation by patching the bulk operation
+        with patch('opensearchpy.helpers.bulk') as mock_bulk:
+            mock_bulk.return_value = (2, [])  # success_count, failed_items
+            
+            # Create test documents with correct embedding dimensions
+            valid_docs = [
+                ColumnDoc(
+                    column_id="test.col1",
+                    column_name="col1",
+                    embedding=[0.1, 0.2, 0.3],  # Match embedding_dim
+                    sample_values=["val1"],
+                    metadata={"domain": "test"}
+                ),
+                ColumnDoc(
+                    column_id="test.col2", 
+                    column_name="col2",
+                    embedding=[0.4, 0.5, 0.6],  # Match embedding_dim
+                    sample_values=["val2"],
+                    metadata={"domain": "test"}
+                )
+            ]
+            
+            # Test successful upsert
+            store.upsert_columns(valid_docs)
+            
+            # Verify bulk was called
+            mock_bulk.assert_called_once()
+            
+            # Test with bulk errors
+            mock_bulk.reset_mock()
+            mock_bulk.return_value = (1, [{"index": {"_id": "doc1", "status": 400, "error": "Bad request"}}])
+            
+            # Should not raise exception, just log error
+            store.upsert_columns(valid_docs)
+            mock_bulk.assert_called_once()
+
+
+def test_column_doc_validation():
+    """Test ColumnDoc validation and edge cases"""
+    try:
+        from app.aoss.column_store import ColumnDoc
+    except ImportError:
+        pytest.skip("Required modules not available")
+    
+    # Test valid ColumnDoc creation
+    doc = ColumnDoc(
+        column_id="test.column",
+        column_name="column",
+        embedding=[0.1, 0.2, 0.3],
+        sample_values=["val1", "val2"],
+        metadata={"domain": "test", "table": "table1"}
+    )
+    
+    assert doc.column_id == "test.column"
+    assert doc.column_name == "column"
+    assert len(doc.embedding) == 3
+    assert len(doc.sample_values) == 2
+    assert doc.metadata["domain"] == "test"
+    
+    # Test with empty sample values
+    doc_empty_samples = ColumnDoc(
+        column_id="test.column2",
+        column_name="column2", 
+        embedding=[0.1, 0.2, 0.3],
+        sample_values=[],
+        metadata={"domain": "test"}
+    )
+    
+    assert len(doc_empty_samples.sample_values) == 0
+    
+    # Test with minimal metadata
+    doc_minimal = ColumnDoc(
+        column_id="test.column3",
+        column_name="column3",
+        embedding=[0.1, 0.2, 0.3],
+        sample_values=["val"],
+        metadata={}
+    )
+    
+    assert len(doc_minimal.metadata) == 0
+
+
+def test_domain_case_sensitivity():
+    """Test case-insensitive domain operations"""
+    try:
+        from app.aoss.column_store import OpenSearchColumnStore
+    except ImportError:
+        pytest.skip("Required modules not available")
+    
+    with patch('app.aoss.column_store.create_aoss_client') as mock_client_factory:
+        mock_client = Mock()
+        mock_client_factory.return_value = mock_client
+        
+        # Mock index creation
+        mock_client.indices.exists.return_value = True
+        
+        store = OpenSearchColumnStore(index_name="test-index", embedding_dim=5)
+        
+        # Mock get_all_domains to return existing domains
+        with patch.object(store, 'get_all_domains') as mock_get_domains:
+            mock_get_domains.return_value = ["TestDomain", "AnotherDomain"]
+            
+            # Should find existing domain regardless of case
+            result = store.check_domain_exists_case_insensitive("testdomain")
+            assert result["exists"] is True
+            assert result["existing_domain"] == "TestDomain"
+            assert result["requested_domain"] == "testdomain"
+            
+            result = store.check_domain_exists_case_insensitive("TESTDOMAIN") 
+            assert result["exists"] is True
+            assert result["existing_domain"] == "TestDomain"
+            
+            result = store.check_domain_exists_case_insensitive("TestDomain")
+            assert result["exists"] is True
+            assert result["existing_domain"] == "TestDomain"
+            
+            # Test when domain doesn't exist
+            result = store.check_domain_exists_case_insensitive("nonexistent")
+            assert result["exists"] is False
+            assert result["existing_domain"] is None
+
+
+def test_error_handling():
+    """Test error handling in various scenarios"""
+    try:
+        from app.aoss.column_store import OpenSearchColumnStore
+    except ImportError:
+        pytest.skip("Required modules not available")
+    
+    with patch('app.aoss.column_store.create_aoss_client') as mock_client_factory:
+        mock_client = Mock()
+        mock_client_factory.return_value = mock_client
+        
+        # Mock index creation
+        mock_client.indices.exists.return_value = True
+        
+        store = OpenSearchColumnStore(index_name="test-index", embedding_dim=5)
+        
+        # Test search error handling
+        from opensearchpy.exceptions import OpenSearchException
+        mock_client.search.side_effect = OpenSearchException("Search failed")
+        
+        # get_all_domains should handle errors gracefully
+        domains = store.get_all_domains()
+        assert domains == []
+        
+        # get_all_domains_realtime should also handle errors  
+        mock_client.search.side_effect = OpenSearchException("Search failed")
+        domains_realtime = store.get_all_domains_realtime()
+        assert domains_realtime == []
+        
+        # Test force_refresh_index error handling
+        mock_client.indices.refresh.side_effect = Exception("Refresh failed")
+        result = store.force_refresh_index()
+        assert result is False  # Should return False on error
+        
+        # Reset for get_columns_by_domain test
+        mock_client.search.side_effect = OpenSearchException("Search failed")
+        columns = store.get_columns_by_domain("test_domain")
+        assert columns == []
+
+
 # ==========================================================================
 # MAIN EXECUTION FOR MANUAL TESTING
 # ==========================================================================

@@ -5,10 +5,19 @@ Custom exception handlers for standardized API responses
 from fastapi import Request, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from typing import Optional, Any
+from typing import Optional, Any, Dict
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+class SchemaGenerationError(Exception):
+    """Exception raised when schema generation fails"""
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        self.message = message
+        self.details = details or {}
+        super().__init__(self.message)
+
 
 class StandardResponse(BaseModel):
     """Standardized API response format"""
