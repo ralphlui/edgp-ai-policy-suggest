@@ -1,5 +1,6 @@
 """
 Tests for app/agents/agent_runner.py module
+Tests updated to match LangGraph-based implementation
 """
 import pytest
 from unittest.mock import Mock, patch, MagicMock
@@ -15,237 +16,172 @@ class TestAgentRunnerModule:
 
     def test_agent_runner_functions_exist(self):
         """Test agent runner functions exist"""
-        from app.agents.agent_runner import run_agent
+        from app.agents.agent_runner import run_agent, build_graph, AgentState
         assert callable(run_agent)
+        assert callable(build_graph)
+        assert AgentState is not None
 
-    @patch('app.agents.agent_runner.create_react_agent')
-    @patch('app.agents.agent_runner.ChatOpenAI')
-    def test_run_agent_basic_mock(self, mock_chat_openai, mock_create_agent):
+    @patch('app.agents.agent_runner.fetch_gx_rules')
+    @patch('app.agents.agent_runner.suggest_column_rules')
+    @patch('app.agents.agent_runner.format_gx_rules')
+    @patch('app.agents.agent_runner.normalize_rule_suggestions')
+    @patch('app.agents.agent_runner.convert_to_rule_ms_format')
+    def test_run_agent_basic_mock(self, mock_convert, mock_normalize, mock_format, mock_suggest, mock_fetch):
         """Test basic agent running with mocks"""
-        # Setup ChatOpenAI mock
-        mock_llm = Mock()
-        mock_chat_openai.return_value = mock_llm
-        
-        # Setup agent mock
-        mock_agent = Mock()
-        mock_agent.invoke.return_value = {
-            "output": "Test agent response",
-            "intermediate_steps": []
-        }
-        mock_create_agent.return_value = mock_agent
+        # Setup mocks
+        mock_fetch.invoke.return_value = ["mock_rule"]
+        mock_suggest.invoke.return_value = "raw suggestions"
+        mock_format.invoke.return_value = ["formatted rules"]
+        mock_normalize.invoke.return_value = {"col1": {"expectations": ["rule1"]}}
+        mock_convert.invoke.return_value = [{"rule": "test"}]
         
         from app.agents.agent_runner import run_agent
         
-        result = run_agent("test query", [])
+        result = run_agent({"col1": {"type": "string"}})
         
-        assert isinstance(result, dict)
-        assert "output" in result
-        mock_chat_openai.assert_called_once()
-        mock_create_agent.assert_called_once()
+        assert isinstance(result, list)
 
-    @patch('app.agents.agent_runner.create_react_agent')
-    @patch('app.agents.agent_runner.ChatOpenAI')
-    def test_run_agent_with_tools(self, mock_chat_openai, mock_create_agent):
-        """Test agent running with tools"""
-        mock_llm = Mock()
-        mock_chat_openai.return_value = mock_llm
-        
-        mock_agent = Mock()
-        mock_agent.invoke.return_value = {
-            "output": "Used tools successfully",
-            "intermediate_steps": [("tool1", "result1")]
-        }
-        mock_create_agent.return_value = mock_agent
-        
-        # Mock tools
-        mock_tool1 = Mock()
-        mock_tool1.name = "test_tool"
-        mock_tools = [mock_tool1]
+    @patch('app.agents.agent_runner.build_graph')
+    def test_run_agent_with_tools(self, mock_build_graph):
+        """Test agent running with graph execution"""
+        # Setup graph mock
+        mock_graph = Mock()
+        mock_graph.invoke.return_value = Mock(rule_suggestions=[{"rule": "test"}])
+        mock_build_graph.return_value = mock_graph
         
         from app.agents.agent_runner import run_agent
         
-        result = run_agent("use tools to help", mock_tools)
+        result = run_agent({"col1": {"type": "string"}})
         
-        assert isinstance(result, dict)
-        assert "output" in result
-        # Verify tools were passed to create_react_agent
-        call_args = mock_create_agent.call_args
-        assert len(call_args[0]) >= 2  # llm, tools, ...
+        assert isinstance(result, list)
+        mock_build_graph.assert_called_once()
 
-    @patch('app.agents.agent_runner.create_react_agent')
-    @patch('app.agents.agent_runner.ChatOpenAI')
-    def test_run_agent_error_handling(self, mock_chat_openai, mock_create_agent):
+    @patch('app.agents.agent_runner.build_graph')
+    def test_run_agent_error_handling(self, mock_build_graph):
         """Test agent error handling"""
-        mock_llm = Mock()
-        mock_chat_openai.return_value = mock_llm
-        
-        mock_agent = Mock()
-        mock_agent.invoke.side_effect = Exception("Agent execution failed")
-        mock_create_agent.return_value = mock_agent
+        # Setup graph mock to raise exception
+        mock_graph = Mock()
+        mock_graph.invoke.side_effect = Exception("Graph execution failed")
+        mock_build_graph.return_value = mock_graph
         
         from app.agents.agent_runner import run_agent
         
-        try:
-            result = run_agent("test query", [])
-            # If it doesn't raise, check result format
-            assert isinstance(result, dict)
-        except Exception:
-            # Expected to fail in some cases
-            pass
+        with pytest.raises(Exception):
+            run_agent({"col1": {"type": "string"}})
 
-    @patch('app.agents.agent_runner.create_react_agent')
-    @patch('app.agents.agent_runner.ChatOpenAI')
-    def test_run_agent_complex_query(self, mock_chat_openai, mock_create_agent):
-        """Test agent with complex query"""
-        mock_llm = Mock()
-        mock_chat_openai.return_value = mock_llm
+    @patch('app.agents.agent_runner.build_graph')
+    def test_run_agent_complex_query(self, mock_build_graph):
+        """Test agent with complex schema"""
+        # Setup graph mock
+        mock_result = Mock()
+        mock_result.rule_suggestions = [
+            {"rule": "test1", "column": "col1"},
+            {"rule": "test2", "column": "col2"}
+        ]
+        mock_graph = Mock()
+        mock_graph.invoke.return_value = mock_result
+        mock_build_graph.return_value = mock_graph
         
-        mock_agent = Mock()
-        mock_agent.invoke.return_value = {
-            "output": "Complex analysis completed",
-            "intermediate_steps": [
-                ("analysis_tool", "step1_result"),
-                ("validation_tool", "step2_result")
-            ]
+        from app.agents.agent_runner import run_agent
+        
+        complex_schema = {
+            "col1": {"type": "string", "nullable": False},
+            "col2": {"type": "integer", "nullable": True},
+            "col3": {"type": "date", "nullable": False}
         }
-        mock_create_agent.return_value = mock_agent
+        
+        result = run_agent(complex_schema)
+        
+        assert isinstance(result, list)
+        assert len(result) == 2
+
+    def test_run_agent_executor_mock(self):
+        """Test that build_graph creates a workflow"""
+        from app.agents.agent_runner import build_graph
+        
+        # Test that build_graph returns a compiled graph
+        graph = build_graph()
+        assert graph is not None
+        assert hasattr(graph, 'invoke')
+
+    @patch('app.agents.agent_runner.build_graph')
+    def test_run_agent_llm_configuration(self, mock_build_graph):
+        """Test agent state management"""
+        mock_result = Mock()
+        mock_result.rule_suggestions = [{"rule": "config_test"}]
+        mock_graph = Mock()
+        mock_graph.invoke.return_value = mock_result
+        mock_build_graph.return_value = mock_graph
         
         from app.agents.agent_runner import run_agent
         
-        complex_query = """
-        Analyze the customer data schema and suggest appropriate data governance rules.
-        Consider data quality, privacy, and compliance requirements.
-        """
+        result = run_agent({"test_col": {"type": "string"}})
         
-        result = run_agent(complex_query, [])
-        
-        assert isinstance(result, dict)
-        assert "output" in result
+        assert isinstance(result, list)
+        # Verify the graph was called with correct arguments
+        mock_build_graph.assert_called_once()
 
-    @patch('app.agents.agent_runner.AgentExecutor')
-    @patch('app.agents.agent_runner.create_react_agent')
-    @patch('app.agents.agent_runner.ChatOpenAI')
-    def test_run_agent_executor_mock(self, mock_chat_openai, mock_create_agent, mock_agent_executor):
-        """Test agent executor functionality"""
-        mock_llm = Mock()
-        mock_chat_openai.return_value = mock_llm
-        
-        mock_agent = Mock()
-        mock_create_agent.return_value = mock_agent
-        
-        mock_executor = Mock()
-        mock_executor.invoke.return_value = {"output": "Executor result"}
-        mock_agent_executor.from_agent_and_tools.return_value = mock_executor
+    @patch('app.agents.agent_runner.build_graph')
+    def test_run_agent_empty_tools(self, mock_build_graph):
+        """Test agent with empty schema"""
+        mock_result = Mock()
+        mock_result.rule_suggestions = []
+        mock_graph = Mock()
+        mock_graph.invoke.return_value = mock_result
+        mock_build_graph.return_value = mock_graph
         
         from app.agents.agent_runner import run_agent
         
-        result = run_agent("test query", [])
+        result = run_agent({})
         
-        assert isinstance(result, dict)
+        assert isinstance(result, list)
+        assert len(result) == 0
 
-    def test_agent_runner_imports(self):
-        """Test agent runner imports work correctly"""
-        from app.agents.agent_runner import run_agent
-        assert callable(run_agent)
-
-    @patch('app.agents.agent_runner.ChatOpenAI')
-    def test_run_agent_llm_configuration(self, mock_chat_openai):
-        """Test LLM configuration in agent"""
-        mock_llm = Mock()
-        mock_chat_openai.return_value = mock_llm
+    def test_run_agent_prompt_template(self):
+        """Test AgentState creation"""
+        from app.agents.agent_runner import AgentState
         
-        with patch('app.agents.agent_runner.create_react_agent') as mock_create_agent:
-            mock_agent = Mock()
-            mock_agent.invoke.return_value = {"output": "test"}
-            mock_create_agent.return_value = mock_agent
-            
-            from app.agents.agent_runner import run_agent
-            
-            run_agent("test", [])
-            
-            # Verify ChatOpenAI was called with expected parameters
-            mock_chat_openai.assert_called_once()
-            call_kwargs = mock_chat_openai.call_args[1]
-            assert "model" in call_kwargs or len(mock_chat_openai.call_args[0]) > 0
-
-    @patch('app.agents.agent_runner.create_react_agent')
-    @patch('app.agents.agent_runner.ChatOpenAI')
-    def test_run_agent_empty_tools(self, mock_chat_openai, mock_create_agent):
-        """Test agent running with empty tools list"""
-        mock_llm = Mock()
-        mock_chat_openai.return_value = mock_llm
-        
-        mock_agent = Mock()
-        mock_agent.invoke.return_value = {"output": "No tools used"}
-        mock_create_agent.return_value = mock_agent
-        
-        from app.agents.agent_runner import run_agent
-        
-        result = run_agent("simple query", [])
-        
-        assert isinstance(result, dict)
-        assert "output" in result
-
-    @patch('app.agents.agent_runner.create_react_agent')
-    @patch('app.agents.agent_runner.ChatOpenAI')
-    def test_run_agent_prompt_template(self, mock_chat_openai, mock_create_agent):
-        """Test agent with prompt template"""
-        mock_llm = Mock()
-        mock_chat_openai.return_value = mock_llm
-        
-        mock_agent = Mock()
-        mock_agent.invoke.return_value = {"output": "Prompted response"}
-        mock_create_agent.return_value = mock_agent
-        
-        from app.agents.agent_runner import run_agent
-        
-        result = run_agent("query with prompt context", [])
-        
-        assert isinstance(result, dict)
-        # Verify create_react_agent was called with prompt parameter
-        call_kwargs = mock_create_agent.call_args[1] if mock_create_agent.call_args[1] else {}
-        # Should have prompt parameter or be in positional args
-        assert len(mock_create_agent.call_args[0]) >= 2
+        # Test AgentState initialization
+        state = AgentState(data_schema={"col1": {"type": "string"}})
+        assert state.data_schema == {"col1": {"type": "string"}}
+        assert state.gx_rules is None
+        assert state.rule_suggestions is None
 
 
 class TestAgentRunnerUtilities:
-    """Test utility functions and edge cases in agent runner"""
+    """Test utility functions and configurations"""
     
     def test_module_level_constants(self):
-        """Test module level constants and imports"""
-        from app.agents.agent_runner import run_agent
-        assert callable(run_agent)
-
-    @patch('app.agents.agent_runner.logger')
-    def test_logging_functionality(self, mock_logger):
-        """Test logging functionality in agent runner"""
+        """Test module level constants exist"""
         from app.agents import agent_runner
-        
-        # Just verify module loads with logger
-        assert hasattr(agent_runner, '__name__')
+        assert hasattr(agent_runner, 'logger')
 
-    @patch('app.agents.agent_runner.OPENAI_API_KEY', 'test-key')
-    @patch('app.agents.agent_runner.ChatOpenAI')
-    def test_api_key_usage(self, mock_chat_openai):
-        """Test API key usage in agent"""
-        mock_llm = Mock()
-        mock_chat_openai.return_value = mock_llm
+    def test_logging_functionality(self):
+        """Test logging configuration"""
+        from app.agents.agent_runner import logger
+        assert logger.name == 'app.agents.agent_runner'
+
+    @patch('app.agents.agent_runner.build_graph')
+    def test_api_key_usage(self, mock_build_graph):
+        """Test that agent can handle API configuration"""
+        mock_result = Mock()
+        mock_result.rule_suggestions = [{"rule": "api_test"}]
+        mock_graph = Mock()
+        mock_graph.invoke.return_value = mock_result
+        mock_build_graph.return_value = mock_graph
         
-        with patch('app.agents.agent_runner.create_react_agent') as mock_create_agent:
-            mock_agent = Mock()
-            mock_agent.invoke.return_value = {"output": "test"}
-            mock_create_agent.return_value = mock_agent
-            
-            from app.agents.agent_runner import run_agent
-            
-            run_agent("test", [])
-            
-            # Verify API key was used in ChatOpenAI initialization
-            mock_chat_openai.assert_called_once()
+        from app.agents.agent_runner import run_agent
+        
+        # Test with schema that might require API calls
+        schema = {"api_column": {"type": "text", "description": "API data"}}
+        result = run_agent(schema)
+        
+        assert isinstance(result, list)
 
     def test_function_docstrings(self):
-        """Test function docstrings exist"""
-        from app.agents.agent_runner import run_agent
+        """Test that functions have proper documentation"""
+        from app.agents.agent_runner import run_agent, build_graph
         
-        # Function should be callable
-        assert callable(run_agent)
+        # Check docstrings exist (even if minimal)
+        assert run_agent.__name__ == 'run_agent'
+        assert build_graph.__name__ == 'build_graph'

@@ -49,7 +49,7 @@ except ImportError as e:
 # MANUAL TESTING FUNCTIONS (Can run without pytest)
 # ==========================================================================
 
-def test_endpoint(url, method="GET", data=None, headers=None, expected_status=200, test_name=""):
+def manual_test_endpoint(url, method="GET", data=None, headers=None, expected_status=200, test_name=""):
     """Test an API endpoint"""
     print(f"\n🔍 Testing: {test_name}")
     print(f"   URL: {url}")
@@ -95,31 +95,31 @@ def manual_test_vector_db_endpoints():
     time.sleep(3)
     
     # Test 1: Vector DB Status
-    test_endpoint(
+    manual_test_endpoint(
         f"{base_url}/api/aips/vectordb/status",
         test_name="Vector DB Status Check"
     )
     
     # Test 2: List all domains
-    domains_data = test_endpoint(
+    domains_data = manual_test_endpoint(
         f"{base_url}/api/aips/vectordb/domains",
         test_name="List All Domains"
     )
     
     # Test 3: Check specific domain (should work now)
-    test_endpoint(
+    manual_test_endpoint(
         f"{base_url}/api/aips/vectordb/domain/product",
         test_name="Get Product Domain Details"
     )
     
     # Test 4: Health endpoint
-    test_endpoint(
+    manual_test_endpoint(
         f"{base_url}/health",
         test_name="Health Check"
     )
     
     # Test 5: Suggest rules without auth (should get 403)
-    test_endpoint(
+    manual_test_endpoint(
         f"{base_url}/api/aips/suggest-rules",
         method="POST",
         data={"domain": "product"},
@@ -204,8 +204,8 @@ if IMPORTS_AVAILABLE:
         """Test vector database API endpoints"""
         
         def test_endpoint_functions_available(self):
-            """Test that endpoint testing functions are available"""
-            assert callable(test_endpoint)
+            """Test that test endpoint functions are available"""
+            assert callable(manual_test_endpoint)
         
         @pytest.mark.asyncio
         async def test_vector_db_status_endpoint(self):
@@ -261,7 +261,7 @@ if IMPORTS_AVAILABLE:
             import app.vector_db.schema_loader
             app.vector_db.schema_loader._store = None
             
-            mock_settings.column_index_name = "test-index"
+            mock_settings.opensearch_index = "test-index"
             mock_store = Mock()
             mock_store_class.return_value = mock_store
             
@@ -278,7 +278,7 @@ if IMPORTS_AVAILABLE:
             import app.vector_db.schema_loader
             app.vector_db.schema_loader._store = None
             
-            mock_settings.column_index_name = "test-index"
+            mock_settings.opensearch_index = "test-index"
             mock_store_class.side_effect = Exception("OpenSearch connection failed")
             
             result = get_store()
@@ -293,7 +293,7 @@ if IMPORTS_AVAILABLE:
             import app.vector_db.schema_loader
             app.vector_db.schema_loader._store = None
             
-            mock_settings.column_index_name = "test-index"
+            mock_settings.opensearch_index = "test-index"
             mock_store = Mock()
             mock_store_class.return_value = mock_store
             
