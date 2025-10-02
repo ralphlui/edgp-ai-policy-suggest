@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Body, Depends
+from fastapi import APIRouter, HTTPException, Body, Depends, Request
 from fastapi.responses import JSONResponse
 from app.agents.agent_runner import run_agent
 from app.agents.schema_suggester import bootstrap_schema_for_domain
@@ -46,7 +46,7 @@ async def suggest_rules(
 ):
     try:
         # Log authenticated user information
-        logger.info(f"🔐 Suggest rules request from user: {user.email} with scopes: {user.scopes}")
+        logger.info(f" Suggest rules request from user: {user.email} with scopes: {user.scopes}")
         
         # Try to get schema from vector database
         logger.info(f"Attempting to retrieve schema for domain: {domain}")
@@ -60,19 +60,19 @@ async def suggest_rules(
             
             # If schema is empty but no exception, try with forced refresh for newly created domains
             if not schema:
-                logger.info(f"Schema not found for domain {domain}, attempting with forced refresh...")
+                logger.info(f"Schema not found for domain {domain}, attempting optimized refresh...")
                 from app.vector_db.schema_loader import get_store
                 store = get_store()
                 if store:
                     # Force refresh to pick up recently created domains
                     store.force_refresh_index()
-                    # Wait a short moment for refresh to take effect
+                    # Reduced wait time for better performance
                     import asyncio
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.1)  # Reduced from 0.5 to 0.1 seconds
                     # Try again
                     schema = get_schema_by_domain(domain)
                     if schema:
-                        logger.info(f"Schema found for domain {domain} after forced refresh")
+                        logger.info(f" Schema found for domain {domain} after optimized refresh")
             
             vector_db_status = "connected"
             logger.info(f"Vector DB connection successful. Schema retrieval result for domain {domain}: {schema}")
@@ -176,6 +176,7 @@ async def suggest_rules(
 
 @router.post("/api/aips/create/domain")
 async def create_domain(
+    request: Request,
     payload: dict = Body(...),
     user: UserInfo = Depends(verify_any_scope_token)
 ):
@@ -379,49 +380,88 @@ async def create_domain(
                 storage_error = str(e)
                 # Continue with response generation even if storage fails
 
-        # Step 3: Return based on toggle
+        # Step 3: Enhanced return logic with agentic rule suggestions
         if return_csv:
-            # Generate sample data if not provided in schema
-            data = {}
-            for col, info in schema.items():
-                if "sample_values" in info and info["sample_values"]:
-                    # Use provided sample values
-                    data[col] = info["sample_values"][:5]
-                else:
-                    # Generate basic sample values based on dtype
-                    dtype = info.get("dtype", "string")
-                    if dtype == "integer":
-                        data[col] = [1, 2, 3, 4, 5]
-                    elif dtype == "float":
-                        data[col] = [1.0, 2.5, 3.0, 4.5, 5.0]
-                    elif dtype == "date":
-                        data[col] = ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"]
-                    else:  # string or other
-                        data[col] = [f"Sample_{col}_1", f"Sample_{col}_2", f"Sample_{col}_3", f"Sample_{col}_4", f"Sample_{col}_5"]
+            # Create empty DataFrame with just column headers (no sample data)
+            df = pd.DataFrame(columns=column_names)
             
-            df = pd.DataFrame(data)
-            buffer = io.StringIO()
-            df.to_csv(buffer, index=False)
-            buffer.seek(0)
-
-            # Add warning header if storage failed
-            headers = {"Content-Disposition": f"attachment; filename={normalized_domain}_schema.csv"}
+            # 🤖 AGENTIC ENHANCEMENT: Generate rule suggestions for CSV response
+            rule_suggestions = []
+            
+            if storage_success:
+                logger.info(f"🤖 Generating rule suggestions for CSV download of domain: {normalized_domain}")
+                try:
+                    # Convert our schema format to the format expected by run_agent
+                    agent_schema = {}
+                    for col_name in column_names:
+                        col_type = schema.get(col_name, {}).get("type", "string")
+                        agent_schema[col_name] = {"type": col_type}
+                    
+                    # Run the agent directly with the schema we just created
+                    from app.agents.agent_runner import run_agent
+                    rule_suggestions = run_agent(agent_schema)
+                    
+                    logger.info(f" Generated {len(rule_suggestions)} rule suggestions for CSV download of domain: {normalized_domain}")
+                    
+                except Exception as agentic_error:
+                    logger.error(f" Rule generation failed for CSV download: {agentic_error}")
+                    rule_suggestions = []
+            
+            # Store CSV temporarily and return JSON with download info + rule suggestions
+            import tempfile
+            import os
+            
+            # Create a temporary file for CSV
+            temp_dir = tempfile.gettempdir()
+            csv_filename = f"{normalized_domain}_schema_{int(__import__('time').time())}.csv"
+            csv_path = os.path.join(temp_dir, csv_filename)
+            
+            # Save CSV to temp file
+            df.to_csv(csv_path, index=False)
+            
+            # Return JSON response with rule suggestions AND CSV download info
+            # Build response with appropriate rule messaging
+            if rule_suggestions:
+                message = f"Schema for domain '{normalized_domain}' created successfully with CSV template and {len(rule_suggestions)} validation rules."
+                rules_available = True
+            else:
+                message = f"Schema for domain '{normalized_domain}' created successfully with CSV template. No validation rules available for this schema."
+                rules_available = False
+            
+            response_data = {
+                "status": "success",
+                "domain": normalized_domain,
+                "message": message,
+                "columns_created": len(column_names),
+                "csv_download": {
+                    "available": True,
+                    "filename": csv_filename,
+                    "download_url": f"{request.base_url}api/aips/download-csv/{csv_filename}",
+                    "type": "template",
+                    "description": "CSV file with column headers.",
+                    "columns": list(df.columns)
+                },
+                "rules_available": rules_available,
+                "rule_suggestions": rule_suggestions,
+                "total_rules": len(rule_suggestions)
+            }
+            
             if not storage_success:
-                headers["X-Storage-Warning"] = "Vector database storage failed - schema not saved"
+                response_data["storage_error"] = storage_error
+                response_data["note"] = "Schema processed and CSV generated, but not saved to vector database"
+            # CSV generation completed
+            
+            return JSONResponse(response_data)
 
-            return StreamingResponse(
-                buffer,
-                media_type="text/csv",
-                headers=headers
-            )
-
-        # JSON response with storage status
-        response_data = {"message": f"Schema for domain '{domain}' processed successfully and stored as '{normalized_domain}'."}
+        # JSON response with user-friendly structure
+        response_data = {
+            "status": "success",
+            "domain": normalized_domain,
+            "message": f"Schema for domain '{normalized_domain}' created successfully.",
+            "columns_created": len(column_names)
+        }
         
         if storage_success:
-            response_data["storage_status"] = "saved"
-            response_data["stored_domain"] = normalized_domain
-            response_data["original_domain"] = domain
             
             # Verify domain is immediately visible (for debugging)
             try:
@@ -435,10 +475,56 @@ async def create_domain(
             except Exception as e:
                 logger.warning(f"Could not verify immediate domain visibility: {e}")
                 response_data["note"] = "Domain created successfully"
+            
+            #  AGENTIC : Automatically generate rule suggestions after schema creation
+            logger.info(f" Agentic workflow: Automatically generating rule suggestions for newly created domain: {normalized_domain}")
+            try:
+                # Wait a brief moment for indexing to complete
+                import asyncio
+                await asyncio.sleep(0.5)
+                
+                # PERFORMANCE OPTIMIZATION: Use the schema we just created directly
+                # instead of waiting for OpenSearch indexing
+                logger.info(f" Agentic workflow: Generating rules immediately using created schema for domain: {normalized_domain}")
+                
+                # Convert our schema format to the format expected by run_agent
+                agent_schema = {}
+                for col_name in column_names:
+                    col_type = schema.get(col_name, {}).get("type", "string")
+                    agent_schema[col_name] = {"type": col_type}
+                
+                # Run the agent directly with the schema we just created
+                from app.agents.agent_runner import run_agent
+                rule_suggestions = run_agent(agent_schema)
+                
+                if rule_suggestions:
+                    response_data["rules_available"] = True
+                    response_data["rule_suggestions"] = rule_suggestions
+                    response_data["total_rules"] = len(rule_suggestions)
+                    response_data["message"] += f" {len(rule_suggestions)} validation rules automatically generated."
+                else:
+                    response_data["rules_available"] = False
+                    response_data["rule_suggestions"] = []
+                    response_data["total_rules"] = 0
+                    response_data["message"] += " No validation rules available for this schema."
+                
+                logger.info(f" Agentic workflow: Successfully generated {len(rule_suggestions)} rule suggestions immediately for domain: {normalized_domain}")
+                
+            except Exception as agentic_error:
+                logger.error(f" Rule generation failed for domain {normalized_domain}: {agentic_error}")
+                response_data["rules_available"] = False
+                response_data["rule_suggestions"] = []
+                response_data["total_rules"] = 0
+                response_data["rule_generation_error"] = str(agentic_error)
+                response_data["message"] += " Automatic rule generation failed. Call /api/aips/suggest-rules to generate validation rules manually."
+                
         else:
-            response_data["storage_status"] = "failed"
+            response_data["status"] = "partial_success"
             response_data["storage_error"] = storage_error
-            response_data["note"] = "Schema was processed but not saved to vector database"
+            response_data["message"] += " However, schema could not be saved to database."
+            response_data["rules_available"] = False
+            response_data["rule_suggestions"] = []
+            response_data["total_rules"] = 0
         
         return JSONResponse(response_data)
 
@@ -496,7 +582,7 @@ async def verify_domain_exists(
     """Verify if a specific domain exists with real-time refresh - useful right after domain creation."""
     try:
         # Log authenticated user information
-        logger.info(f"🔍 Verify domain request from user: {user.email} for domain: {domain_name}")
+        logger.info(f" Verify domain request from user: {user.email} for domain: {domain_name}")
         
         store = get_store()
         if store is None:
@@ -701,5 +787,42 @@ async def get_domain_from_vectordb(domain_name: str):
         return JSONResponse({
             "error": str(e),
             "message": f"Failed to retrieve domain '{domain_name}' from vector database"
+        }, status_code=500)
+
+
+@router.get("/api/aips/download-csv/{filename}")
+async def download_csv_file(filename: str):
+    """Download CSV file generated during domain creation."""
+    try:
+        import tempfile
+        import os
+        from fastapi.responses import FileResponse
+        
+        # Security check - only allow specific filename pattern
+        if not filename.endswith('.csv') or '..' in filename or '/' in filename:
+            return JSONResponse({
+                "error": "Invalid filename"
+            }, status_code=400)
+        
+        temp_dir = tempfile.gettempdir()
+        csv_path = os.path.join(temp_dir, filename)
+        
+        if not os.path.exists(csv_path):
+            return JSONResponse({
+                "error": "CSV file not found or expired",
+                "message": "The CSV file may have been cleaned up. Please regenerate the domain."
+            }, status_code=404)
+        
+        # Return the file for download
+        return FileResponse(
+            csv_path,
+            media_type="text/csv",
+            filename=filename
+        )
+        
+    except Exception as e:
+        return JSONResponse({
+            "error": str(e),
+            "message": "Failed to download CSV file"
         }, status_code=500)
 
