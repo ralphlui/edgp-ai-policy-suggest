@@ -113,13 +113,13 @@ Respond in JSON format:
                  "You create realistic, production-ready column definitions for business domains. "
                  "Focus on commonly used columns that would appear in real-world datasets."),
                 ("human", 
-                 f"""Design a CSV schema for the domain: '{{"domain"}}'.
+                 """Design a CSV schema for the domain: '{domain}'.
 
 Requirements:
-- Generate {config.min_columns}-{config.max_columns} relevant columns
+- Generate """ + f"{config.min_columns}-{config.max_columns}" + """ relevant columns
 - Each column must have a valid identifier name (no spaces, special chars)
-- Use data types: {', '.join(config.supported_types)}
-- Provide exactly {config.min_samples} realistic sample values per column
+- Use data types: """ + f"{', '.join(config.supported_types)}" + """
+- Provide exactly """ + f"{config.min_samples}" + """ realistic sample values per column
 - Include common business fields (IDs, names, dates, status, etc.)
 - Ensure samples are diverse and realistic
 
@@ -164,14 +164,36 @@ def call_llm(domain: str, use_structured_output: bool = True) -> Dict[str, Any]:
         raise ValueError("Domain cannot be empty after normalization")
     
     start_time = time.time()
-    logger.info(f"🔄 Calling LLM for domain: '{domain}' (structured={use_structured_output})")
+    logger.info(f" Calling LLM for domain: '{domain}' (structured={use_structured_output})")
     
     try:
         chain = get_model_chain(use_structured_output=use_structured_output)
-        result = chain.invoke({"domain": domain})
+        
+        # Get format instructions for the chain
+        if use_structured_output:
+            from langchain.output_parsers import PydanticOutputParser
+            parser = PydanticOutputParser(pydantic_object=SchemaResponse)
+            format_instructions = parser.get_format_instructions()
+        else:
+            format_instructions = """
+Respond in JSON format:
+{
+  "columns": [
+    {
+      "name": "column_name",
+      "type": "data_type",
+      "samples": ["sample1", "sample2", "sample3"]
+    }
+  ]
+}"""
+        
+        result = chain.invoke({
+            "domain": domain,
+            "format_instructions": format_instructions
+        })
         
         elapsed_time = time.time() - start_time
-        logger.info(f"✅ LLM response received in {elapsed_time:.2f}s for domain '{domain}'")
+        logger.info(f" LLM response received in {elapsed_time:.2f}s for domain '{domain}'")
         logger.debug(f"LLM raw response: {result}")
         
         # Validate response structure
@@ -187,11 +209,11 @@ def call_llm(domain: str, use_structured_output: bool = True) -> Dict[str, Any]:
             
     except Exception as e:
         elapsed_time = time.time() - start_time
-        logger.error(f"❌ LLM call failed after {elapsed_time:.2f}s for domain '{domain}': {e}")
+        logger.error(f" LLM call failed after {elapsed_time:.2f}s for domain '{domain}': {e}")
         
         # If structured output fails, try fallback to JSON parser
         if use_structured_output:
-            logger.warning("🔄 Retrying with JSON parser fallback")
+            logger.warning(" Retrying with JSON parser fallback")
             return call_llm(domain, use_structured_output=False)
         
         raise SchemaGenerationError(f"LLM call failed for domain '{domain}': {e}")
@@ -211,7 +233,7 @@ def format_llm_schema(raw: Dict[str, Any], strict_validation: bool = True) -> Di
     Raises:
         SchemaGenerationError: If no valid columns found
     """
-    logger.info(f"📋 Formatting LLM response with {len(raw.get('columns', []))} columns")
+    logger.info(f" Formatting LLM response with {len(raw.get('columns', []))} columns")
     
     columns = raw.get("columns", [])
     if not columns:
@@ -224,13 +246,13 @@ def format_llm_schema(raw: Dict[str, Any], strict_validation: bool = True) -> Di
         col_name = col.get("name", f"unnamed_column_{i}")
         
         try:
-            logger.debug(f"🔍 Validating column {i+1}/{len(columns)}: {col_name}")
+            logger.debug(f" Validating column {i+1}/{len(columns)}: {col_name}")
             
             # Enhanced validation
             if not validate_column_schema(col):
                 error_msg = f"Column '{col_name}' failed basic validation"
                 validation_errors.append(error_msg)
-                logger.warning(f"⚠️ {error_msg}")
+                logger.warning(f" {error_msg}")
                 if strict_validation:
                     continue
             
@@ -242,7 +264,7 @@ def format_llm_schema(raw: Dict[str, Any], strict_validation: bool = True) -> Di
             if not _validate_samples_for_type(samples, col_type):
                 error_msg = f"Column '{col_name}': samples don't match type '{col_type}'"
                 validation_errors.append(error_msg)
-                logger.warning(f"⚠️ {error_msg}")
+                logger.warning(f" {error_msg}")
                 if strict_validation:
                     continue
             
@@ -250,7 +272,7 @@ def format_llm_schema(raw: Dict[str, Any], strict_validation: bool = True) -> Di
             if col_name in formatted:
                 error_msg = f"Duplicate column name: '{col_name}'"
                 validation_errors.append(error_msg)
-                logger.warning(f"⚠️ {error_msg}")
+                logger.warning(f" {error_msg}")
                 col_name = f"{col_name}_{i}"  # Make unique
             
             # Format the column
@@ -259,12 +281,12 @@ def format_llm_schema(raw: Dict[str, Any], strict_validation: bool = True) -> Di
                 "sample_values": samples[:3]  # Ensure max 3 samples
             }
             
-            logger.debug(f"✅ Column '{col_name}' validated and added")
+            logger.debug(f" Column '{col_name}' validated and added")
             
         except Exception as e:
             error_msg = f"Error processing column '{col_name}': {e}"
             validation_errors.append(error_msg)
-            logger.error(f"❌ {error_msg}")
+            logger.error(f" {error_msg}")
             if strict_validation:
                 continue
     
@@ -272,12 +294,12 @@ def format_llm_schema(raw: Dict[str, Any], strict_validation: bool = True) -> Di
     config = get_schema_generation_config()
     if len(formatted) < config.min_columns:
         error_summary = f"Only {len(formatted)} valid columns found (minimum {config.min_columns}). Errors: {validation_errors}"
-        logger.error(f"❌ {error_summary}")
+        logger.error(f" {error_summary}")
         raise SchemaGenerationError(error_summary)
     
-    logger.info(f"✅ Successfully formatted schema with {len(formatted)} columns")
+    logger.info(f" Successfully formatted schema with {len(formatted)} columns")
     if validation_errors:
-        logger.warning(f"⚠️ {len(validation_errors)} validation issues encountered")
+        logger.warning(f" {len(validation_errors)} validation issues encountered")
     
     return formatted
 
@@ -363,14 +385,14 @@ def bootstrap_schema_for_domain(
         result = format_llm_schema(raw, strict_validation=strict_validation)
         
         elapsed_time = time.time() - start_time
-        logger.info(f"✅ Successfully bootstrapped schema for '{domain}' in {elapsed_time:.2f}s")
-        logger.info(f"📊 Generated {len(result)} columns: {list(result.keys())}")
+        logger.info(f" Successfully bootstrapped schema for '{domain}' in {elapsed_time:.2f}s")
+        logger.info(f" Generated {len(result)} columns: {list(result.keys())}")
         
         return result
         
     except Exception as e:
         elapsed_time = time.time() - start_time
-        logger.error(f"❌ Schema bootstrapping failed for '{domain}' after {elapsed_time:.2f}s: {e}")
+        logger.error(f" Schema bootstrapping failed for '{domain}' after {elapsed_time:.2f}s: {e}")
         
         # Fallback with relaxed validation
         if fallback_on_error and strict_validation:
@@ -383,7 +405,7 @@ def bootstrap_schema_for_domain(
                     fallback_on_error=False
                 )
             except Exception as fallback_error:
-                logger.error(f"❌ Fallback also failed: {fallback_error}")
+                logger.error(f" Fallback also failed: {fallback_error}")
         
         raise SchemaGenerationError(f"Failed to bootstrap schema for domain '{domain}': {e}")
 
@@ -444,4 +466,4 @@ def clear_model_cache() -> None:
     global _model_chain_cache
     _model_chain_cache.clear()
     get_schema_generation_config.cache_clear()
-    logger.info("🧹 Model cache cleared")
+    logger.info(" Model cache cleared")
