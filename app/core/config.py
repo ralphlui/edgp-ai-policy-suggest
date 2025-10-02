@@ -1,6 +1,18 @@
 """
 Configuration settings for the EDGP AI Policy Suggestion API.
-Uses Pydantic Settings for environment variable management and AWS Secrets Manager for secure API key storage.
+Uses Pydantic Settings for environment variable management and AWS Secrets Mana        else:
+            logger.error(" AI agent API key not available from either:")
+            logger.error(f"   1. AWS Secrets Manager: {OPENAI_SECRET_NAME}")
+            logger.error("   2. Environment variable: OPENAI_API_KEY")
+            logger.error("   Please ensure:")
+            logger.error(f"   - Secret '{OPENAI_SECRET_NAME}' exists in AWS Secrets Manager with key 'ai_agent_api_key'")
+            logger.error(f"   - AWS credentials are configured correctly")
+            logger.error(f"   - OR set OPENAI_API_KEY environment variable for testing")
+            logger.error("   For Kubernetes deployments:")
+            logger.error("     - Check IAM role has secretsmanager:GetSecretValue permission")
+            logger.error("     - Verify service account annotations: eks.amazonaws.com/role-arn")
+            logger.error("     - Ensure pod uses the correct service account")
+            raise Exception(f"AI agent API key not available")ecure API key storage.
 """
 
 from pydantic_settings import BaseSettings
@@ -150,8 +162,8 @@ if USE_AWS_SECRETS:
             logger.error("   Please ensure:")
             logger.error(f"   - Secret '{OPENAI_SECRET_NAME}' exists in AWS Secrets Manager with key 'ai_agent_api_key'")
             logger.error(f"   - AWS credentials are configured correctly")
-            logger.error(f"   - OR set OPENAI_API_KEY environment variable for testing")
-            raise Exception(f"AI agent API key not available")
+        logger.error(f"   - OR set OPENAI_API_KEY environment variable for testing")
+        raise Exception(f"AI agent API key not available")
 else:
     logger.warning(" AWS Secrets Manager is disabled (USE_AWS_SECRETS=false)")
     logger.info(" Using OPENAI_API_KEY from environment variable...")
@@ -161,7 +173,7 @@ else:
         logger.error(" OPENAI_API_KEY environment variable is not set")
         raise Exception("AI agent API key must be provided via OPENAI_API_KEY environment variable when AWS Secrets Manager is disabled")
 
-RULE_MICROSERVICE_URL = os.getenv("rule.api.url")
+RULE_MICROSERVICE_URL = os.getenv("RULE_URL")
 
 if RULE_MICROSERVICE_URL and RULE_MICROSERVICE_URL.startswith("{") and RULE_MICROSERVICE_URL.endswith("}"):
     logger.warning(f" RULE_MICROSERVICE_URL contains placeholder value: {RULE_MICROSERVICE_URL}")
@@ -223,14 +235,14 @@ class Settings(BaseSettings):
     llm_temperature: float = Field(default=0.3, alias="LLM_TEMPERATURE")
     
     # JWT Authentication Settings
-    jwt_public_key: str = Field(alias="jwt.public.key")
+    jwt_public_key: str = Field(alias="JWT_PUBLIC_KEY")
     jwt_algorithm: str = "RS256"
     
     # Authentication microservice URL
-    admin_api_url: str = Field(alias="admin.api.url")
+    admin_api_url: str = Field(alias="ADMIN_URL")
     
     # Rule microservice URL
-    rule_api_url: str = Field(alias="rule.api.url")
+    rule_api_url: str = Field(alias="RULE_URL")
     
     # Logging
     log_level: str = Field(default="info", alias="LOG_LEVEL")

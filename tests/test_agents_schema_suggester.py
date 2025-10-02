@@ -214,7 +214,11 @@ class TestCallLLM:
         result = call_llm("customer", use_structured_output=False)
         
         assert result == mock_response
-        mock_chain.invoke.assert_called_once_with({"domain": "customer"})
+        # Updated to match the new function call with format_instructions
+        mock_chain.invoke.assert_called_once()
+        call_args = mock_chain.invoke.call_args[0][0]
+        assert call_args["domain"] == "customer"
+        assert "format_instructions" in call_args
     
     def test_call_llm_invalid_domain(self):
         """Test LLM call with invalid domain"""

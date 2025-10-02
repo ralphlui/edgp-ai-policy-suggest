@@ -53,7 +53,8 @@ try:
         create_error_response,
         create_auth_error_response,
         StandardResponse,
-        get_token_validator
+        get_token_validator,
+        get_user_info
     )
     from app.main import app
     
@@ -507,6 +508,245 @@ if IMPORTS_AVAILABLE:
             validator = get_token_validator()
             assert isinstance(validator, JWTTokenValidator)
             assert validator == token_validator
+
+    # ENHANCED TEST CASES - Additional Coverage for Bearer.py
+    
+    class TestEnhancedBearerFunctionality:
+        """Enhanced test cases for comprehensive bearer.py coverage"""
+        
+        @pytest.mark.asyncio
+        async def test_verify_jwt_token_with_custom_scopes(self):
+            """Test JWT token verification with custom required scopes"""
+            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid-token")
+            
+            with patch('app.auth.bearer.token_validator.decode_token') as mock_decode, \
+                 patch('app.auth.bearer.token_validator.validate_user_with_auth_service') as mock_validate:
+                
+                mock_decode.return_value = {
+                    "userEmail": "test@example.com",
+                    "sub": "user123",
+                    "scope": "view:org manage:policy"
+                }
+                mock_validate.return_value = {"status": "valid"}
+                
+                # Test with default scopes
+                result = await verify_jwt_token(credentials)
+                assert result.email == "test@example.com"
+                
+                # Test with custom scopes that user has
+                result = await verify_jwt_token(credentials, required_scopes=["manage:policy"])
+                assert result.email == "test@example.com"
+                
+                # Test with custom scopes that user doesn't have
+                with pytest.raises(HTTPException) as exc_info:
+                    await verify_jwt_token(credentials, required_scopes=["admin:system"])
+                
+                assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+
+        @pytest.mark.asyncio 
+        async def test_verify_jwt_token_insufficient_scope_detailed_message(self):
+            """Test detailed error message for insufficient scope"""
+            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid-token")
+            
+            with patch('app.auth.bearer.token_validator.decode_token') as mock_decode, \
+                 patch('app.auth.bearer.token_validator.check_scope_permissions') as mock_check_scope:
+                
+                mock_decode.return_value = {
+                    "userEmail": "test@example.com",
+                    "sub": "user123", 
+                    "scope": "view:org"
+                }
+                mock_check_scope.return_value = False
+                
+                with pytest.raises(HTTPException) as exc_info:
+                    await verify_jwt_token(credentials)
+                
+                assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+                assert "manage:policy scope" in str(exc_info.value.detail)
+
+        def test_token_validator_singleton_thread_safety(self):
+            """Test that token validator singleton is thread-safe"""
+            import threading
+            validators = []
+            
+            def get_validator():
+                validators.append(get_token_validator())
+            
+            # Create multiple threads that get the validator
+            threads = [threading.Thread(target=get_validator) for _ in range(10)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            
+            # All should be the same instance
+            assert len(validators) == 10
+            assert all(v is validators[0] for v in validators)
+
+        @pytest.mark.asyncio
+        async def test_auth_service_integration_headers_validation(self):
+            """Test that correct headers are sent to auth service"""
+            validator = JWTTokenValidator()
+            token_payload = {
+                "userEmail": "test@example.com",
+                "sub": "user123",
+                "scope": "manage:policy"
+            }
+            original_token = "bearer-token-123"
+            
+            with patch('httpx.AsyncClient.get') as mock_get:
+                mock_response = Mock()
+                mock_response.status_code = 200
+                mock_response.json.return_value = {"profile": "data"}
+                mock_get.return_value = mock_response
+                
+                await validator.validate_user_with_auth_service(token_payload, original_token)
+                
+                # Verify correct headers were sent
+                mock_get.assert_called_once()
+                call_args = mock_get.call_args
+                headers = call_args.kwargs['headers']
+                
+                assert headers["X-User-Id"] == "user123"
+                assert headers["Authorization"] == f"Bearer {original_token}"
+
+        def test_scope_validation_edge_cases_extended(self):
+            """Extended edge cases for scope validation"""
+            validator = JWTTokenValidator()
+            
+            # Test with None scope
+            result = validator.check_scope_permissions({"scope": None}, ["manage:policy"])
+            assert result is False
+            
+            # Test with only whitespace between scopes
+            result = validator.check_scope_permissions({"scope": "manage:policy     view:org"}, ["manage:policy"])
+            assert result is True
+            
+            # Test comma-separated with extra spaces
+            result = validator.check_scope_permissions({"scope": " manage:policy , view:org "}, ["manage:policy"])
+            assert result is True
+
+        @pytest.mark.asyncio
+        async def test_user_info_extraction_edge_cases(self):
+            """Test edge cases in user info extraction"""
+            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid-token")
+            
+            # Test with minimal token payload
+            with patch('app.auth.bearer.token_validator.decode_token') as mock_decode, \
+                 patch('app.auth.bearer.token_validator.validate_user_with_auth_service') as mock_validate:
+                
+                mock_decode.return_value = {
+                    "userEmail": "test@example.com",
+                    "sub": "user123",
+                    "scope": ""  # Empty scope
+                }
+                mock_validate.return_value = {"status": "valid"}
+                
+                # Should fail because no manage:policy scope
+                with pytest.raises(HTTPException) as exc_info:
+                    await verify_jwt_token(credentials)
+                
+                assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+
+        @pytest.mark.asyncio
+        async def test_optional_jwt_edge_cases(self):
+            """Test edge cases for optional JWT authentication"""
+            # Test with None credentials
+            result = await optional_jwt_token(None)
+            assert result is None
+            
+            # Test with empty credentials
+            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="")
+            result = await optional_jwt_token(credentials)
+            assert result is None
+
+        def test_standard_response_comprehensive(self):
+            """Comprehensive test of StandardResponse model"""
+            from app.auth.bearer import StandardResponse
+            
+            # Test all field types
+            response = StandardResponse(
+                data=[1, 2, 3],  # List data
+                success=True,
+                message="Operation successful",
+                totalRecord=3,
+                status=201
+            )
+            
+            assert response.data == [1, 2, 3]
+            assert response.success is True
+            assert response.totalRecord == 3
+            assert response.status == 201
+            
+            # Test with None data explicitly
+            response_none = StandardResponse(
+                data=None,
+                success=False,
+                message="No data",
+                totalRecord=0,
+                status=404
+            )
+            
+            assert response_none.data is None
+            assert response_none.success is False
+
+        @pytest.mark.asyncio
+        async def test_get_user_info_comprehensive(self):
+            """Comprehensive test of get_user_info function"""
+            with patch('app.auth.bearer.token_validator.decode_token') as mock_decode, \
+                 patch('app.auth.bearer.token_validator.validate_user_with_auth_service') as mock_validate:
+                
+                # Test with rich token payload
+                mock_decode.return_value = {
+                    "userEmail": "test@example.com",
+                    "sub": "user123",
+                    "scope": "manage:policy view:org manage:mdm",
+                    "iat": 1640995200,
+                    "exp": 1641081600,
+                    "orgId": "org456",
+                    "userName": "Test User"
+                }
+                mock_validate.return_value = {
+                    "id": "user123",
+                    "email": "test@example.com",
+                    "profile": {"name": "Test User", "role": "admin"}
+                }
+                
+                result = await get_user_info("rich-token")
+                
+                assert result["email"] == "test@example.com"
+                assert result["user_id"] == "user123"
+                assert len(result["scopes"]) == 3
+                assert "manage:policy" in result["scopes"]
+                assert result["payload"]["orgId"] == "org456"
+                assert result["user_data"]["profile"]["role"] == "admin"
+
+        @pytest.mark.asyncio
+        async def test_convenience_auth_functions(self):
+            """Test convenience authentication functions"""
+            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid-token")
+            
+            with patch('app.auth.bearer.verify_jwt_token') as mock_verify:
+                mock_user = UserInfo(
+                    email="test@example.com",
+                    user_id="user123",
+                    scopes=["manage:policy"],
+                    token_payload={"userEmail": "test@example.com", "sub": "user123"}
+                )
+                mock_verify.return_value = mock_user
+                
+                # Test verify_policy_token
+                result = await verify_policy_token(credentials)
+                assert result.email == "test@example.com"
+                mock_verify.assert_called_with(credentials, required_scopes=["manage:policy"])
+                
+                # Test verify_mdm_token  
+                result = await verify_mdm_token(credentials)
+                assert result.email == "test@example.com"
+                
+                # Test verify_any_scope_token
+                result = await verify_any_scope_token(credentials)
+                assert result.email == "test@example.com"
 
 
 # ==========================================================================
