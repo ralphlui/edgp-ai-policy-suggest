@@ -27,4 +27,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 EXPOSE 8092
 
 # Run the service
-CMD ["python", "app.main"]
+CMD ["python", "-m", "app.main"]
