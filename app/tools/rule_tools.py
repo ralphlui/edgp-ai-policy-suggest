@@ -14,22 +14,12 @@ def fetch_gx_rules(query: str = "") -> list:
     try:
         rule_url = settings.rule_api_url or os.getenv("RULE_URL")
         if not rule_url or rule_url in ["{RULE_URL}", "RULE_URL"]:
-
-            logger.warning("Rule Microservice URL not configured. Using empty rules list.")
-            return []
-
             logger.warning("Rule Microservice URL not configured. Using default rules.")
             return _get_default_rules()
-
             
         resp = requests.get(rule_url, timeout=10)
         resp.raise_for_status()
         return resp.json()
-
-    except requests.exceptions.RequestException as e:
-        logger.warning(f"Rule Microservice not available at {rule_url}. Using empty rules list. Error: {e}")
-        return []
-
     except Exception as e:
         logger.warning(f"Rule Microservice not available. Using default rules. Error: {e}")
         return _get_default_rules()
