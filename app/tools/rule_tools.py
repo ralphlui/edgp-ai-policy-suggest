@@ -1,8 +1,10 @@
 from langchain.agents import tool
 from langchain_community.chat_models import ChatOpenAI
-from app.core.config import OPENAI_API_KEY, RULE_MICROSERVICE_URL, settings
+from app.core.config import settings
+from app.core.aws_secrets_service import require_openai_api_key
 import json, re, requests
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -10,43 +12,24 @@ logger = logging.getLogger(__name__)
 def fetch_gx_rules(query: str = "") -> list:
     """Fetch GX rules from Rule Microservice."""
     try:
-        resp = requests.get(RULE_MICROSERVICE_URL, timeout=10)
+        rule_url = settings.rule_api_url or os.getenv("RULE_URL")
+        if not rule_url or rule_url in ["{RULE_URL}", "RULE_URL"]:
+            logger.warning("Rule Microservice URL not configured. Using empty rules list.")
+            return []
+            
+        resp = requests.get(rule_url, timeout=10)
         resp.raise_for_status()
         return resp.json()
-    except requests.exceptions.ConnectionError:
-        logger.warning(f"Rule Microservice not available at {RULE_MICROSERVICE_URL}. Using default rules.")
-        # Return a basic set of GX rules for common data types
-        return [
-            {
-                "rule_name": "ExpectColumnValuesToNotBeNull",
-                "description": "Expect column values to not be null",
-                "applies_to": ["string", "integer", "float", "date", "boolean"]
-            },
-            {
-                "rule_name": "ExpectColumnValuesToMatchRegex", 
-                "description": "Expect column values to match a regular expression",
-                "applies_to": ["string"]
-            },
-            {
-                "rule_name": "ExpectColumnValuesToBeBetween",
-                "description": "Expect column values to be between min and max",
-                "applies_to": ["integer", "float"]
-            },
-            {
-                "rule_name": "ExpectColumnValuesToBeOfType",
-                "description": "Expect column values to be of a specific type",
-                "applies_to": ["string", "integer", "float", "date", "boolean"]
-            }
-        ]
-    except Exception as e:
-        logger.error(f"Unexpected error fetching GX rules: {e}")
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"Rule Microservice not available at {rule_url}. Using empty rules list. Error: {e}")
         return []
 
 @tool
 def suggest_column_rules(data_schema: dict, gx_rules: list) -> str:
     """Use LLM to suggest GX rules per column."""
     
-    llm = ChatOpenAI(model=settings.rules_llm_model, openai_api_key=OPENAI_API_KEY, temperature=settings.llm_temperature)
+    openai_key = require_openai_api_key()
+    llm = ChatOpenAI(model=settings.rules_llm_model, openai_api_key=openai_key, temperature=settings.llm_temperature)
     
     prompt = f"""
     You are a data governance expert. Given this schema:
@@ -87,7 +70,8 @@ def suggest_column_rules(data_schema: dict, gx_rules: list) -> str:
 def suggest_column_names_only(domain: str) -> list:
     """Use LLM to suggest CSV column names only (no data types) for a domain not found in vector DB."""
     
-    llm = ChatOpenAI(model=settings.rules_llm_model, openai_api_key=OPENAI_API_KEY, temperature=settings.llm_temperature)
+    openai_key = require_openai_api_key()
+    llm = ChatOpenAI(model=settings.rules_llm_model, openai_api_key=openai_key, temperature=settings.llm_temperature)
 
     prompt = f"""
     You are a data architect helping suggest CSV column names for a new domain called '{domain}'.

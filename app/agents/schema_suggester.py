@@ -8,7 +8,8 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field, field_validator
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from app.vector_db.schema_loader import validate_column_schema
-from app.core.config import OPENAI_API_KEY, settings
+from app.core.config import settings
+from app.core.aws_secrets_service import require_openai_api_key
 from app.core.exceptions import SchemaGenerationError
 import logging
 import json
@@ -74,14 +75,13 @@ def get_model_chain(use_structured_output: bool = True) -> Runnable:
     
     if cache_key not in _model_chain_cache:
         try:
-            # Validate API key exists
-            if not OPENAI_API_KEY:
-                raise ValueError("OpenAI API key not configured")
+            # Get API key from AWS Secrets Manager
+            openai_key = require_openai_api_key()
             
             model = ChatOpenAI(
                 model=settings.schema_llm_model,
                 temperature=settings.llm_temperature,
-                openai_api_key=OPENAI_API_KEY,
+                openai_api_key=openai_key,
                 timeout=get_schema_generation_config().timeout_seconds,
                 max_retries=2
             )

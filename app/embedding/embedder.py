@@ -1,14 +1,19 @@
 from typing import List
 from langchain_openai import OpenAIEmbeddings
 from tenacity import retry, stop_after_attempt, wait_exponential_jitter
-from app.core.config import OPENAI_API_KEY, settings
+from langchain_community.embeddings import OpenAIEmbeddings
+from langchain.schema import Document
+from typing import List
+from app.core.config import settings
+from app.core.aws_secrets_service import require_openai_api_key
 import asyncio
 
 _embedding_cache: dict[str, list[float]] = {}
 
 def get_embedder() -> OpenAIEmbeddings:
     """Lazy initialization of OpenAI embedder"""
-    return OpenAIEmbeddings(model=settings.embed_model, openai_api_key=OPENAI_API_KEY)
+    openai_key = require_openai_api_key()
+    return OpenAIEmbeddings(model=settings.embed_model, openai_api_key=openai_key)
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential_jitter(initial=0.5, max=2.0))
 def _embed_batch(batch: List[str]) -> List[list[float]]:
