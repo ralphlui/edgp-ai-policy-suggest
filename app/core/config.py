@@ -56,7 +56,7 @@ def load_environment_config():
     # Also load a base .env file if it exists (for common settings)
     base_env_file = ".env"
     if os.path.exists(base_env_file):
-        logger.info(f"📁 Loading base environment from: {base_env_file}")
+        logger.info(f" Loading base environment from: {base_env_file}")
         load_dotenv(dotenv_path=base_env_file, override=False)  # Don't override specific env settings
     
     return app_env, env_file_path
