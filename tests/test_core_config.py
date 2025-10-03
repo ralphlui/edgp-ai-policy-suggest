@@ -493,7 +493,6 @@ class TestConfigurationInitialization:
     """Test configuration initialization logic"""
     
     @patch('app.core.config.get_secret_from_aws')
-    @patch.dict(os.environ, {'USE_AWS_SECRETS': 'true'}, clear=False)
     def test_config_logic_aws_success_path(self, mock_get_secret):
         """Test the logic path when AWS Secrets Manager succeeds"""
         mock_get_secret.return_value = "test-aws-key"
@@ -506,7 +505,7 @@ class TestConfigurationInitialization:
         assert result == "test-aws-key"
     
     @patch('app.core.config.get_secret_from_aws')
-    @patch.dict(os.environ, {'USE_AWS_SECRETS': 'true', 'OPENAI_API_KEY': 'fallback-key'}, clear=False)
+    @patch.dict(os.environ, {'OPENAI_API_KEY': 'fallback-key'}, clear=False)
     def test_config_logic_aws_failure_env_fallback(self, mock_get_secret):
         """Test the logic path when AWS fails and env fallback works"""
         from app.core.config import get_secret_from_aws
@@ -674,23 +673,17 @@ class TestModuleInitializationLogic:
                 assert isinstance(RULE_MICROSERVICE_URL, str)
                 assert len(RULE_MICROSERVICE_URL) > 0
     
-    def test_aws_secrets_usage_logic(self):
-        """Test AWS secrets usage logic"""
-        from app.core.config import USE_AWS_SECRETS
+    def test_aws_secrets_always_used_logic(self):
+        """Test that AWS Secrets Manager is always used (no toggle)"""
+        from app.core.config import OPENAI_SECRET_NAME, AWS_REGION
         
-        # Test that USE_AWS_SECRETS is properly set
-        assert isinstance(USE_AWS_SECRETS, bool)
+        # AWS Secrets Manager should always be used
+        assert OPENAI_SECRET_NAME is not None
+        assert AWS_REGION is not None
         
-        # Test the logic branch behavior based on current setting
-        if USE_AWS_SECRETS:
-            # AWS path should be used
-            from app.core.config import OPENAI_SECRET_NAME, AWS_REGION
-            assert OPENAI_SECRET_NAME is not None
-            assert AWS_REGION is not None
-        else:
-            # Environment variable path should be used
-            from app.core.config import OPENAI_API_KEY
-            assert OPENAI_API_KEY is not None
+        # Test that the logic always attempts AWS first
+        from app.core.config import OPENAI_API_KEY
+        assert OPENAI_API_KEY is not None  # Should be available via AWS or fallback
     
     def test_environment_variable_fallback_logic(self):
         """Test environment variable fallback behavior"""
@@ -725,9 +718,10 @@ class TestErrorPathSimulation:
                 'SecretString': 'invalid-json-string'
             }
             
-            # This should trigger the JSON exception handling path
+            # This should trigger the JSON exception handling path and return the plain string
             result = get_secret_from_aws("test-secret", "us-east-1")
-            assert result is None
+            # With the updated logic, invalid JSON is treated as plain text
+            assert result == 'invalid-json-string'
     
     def test_settings_field_access(self):
         """Test settings field access for validation logging"""

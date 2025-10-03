@@ -61,13 +61,14 @@ def load_environment_config():
     
     return app_env, env_file_path
 
-def get_secret_from_aws(secret_name: str, region_name: str) -> str:
+def get_secret_from_aws(secret_name: str, region_name: str, secret_key: str = None) -> str:
     """
     Retrieve a secret from AWS Secrets Manager
     
     Args:
         secret_name: Name of the secret in AWS Secrets Manager
         region_name: AWS region where the secret is stored
+        secret_key: Specific key to extract from JSON secret (optional)
         
     Returns:
         Secret value as string, or None if retrieval fails
@@ -81,32 +82,49 @@ def get_secret_from_aws(secret_name: str, region_name: str) -> str:
         )
         
         logger.info(f" Attempting to retrieve secret: {secret_name}")
+        if secret_key:
+            logger.info(f"   Looking for key: {secret_key}")
         
         response = client.get_secret_value(SecretId=secret_name)
         
         # Parse the secret value
         if 'SecretString' in response:
-            secret_data = json.loads(response['SecretString'])
-            # If it's a JSON object, look for the AI agent API key
-            if isinstance(secret_data, dict):
-                # Look for the specific AI agent API key first
-                if 'ai_agent_api_key' in secret_data:
-                    logger.info(f" Successfully retrieved 'ai_agent_api_key' from secret: {secret_name}")
-                    return secret_data['ai_agent_api_key']
-                # Try other common key names as fallback
-                for key in ['OPENAI_API_KEY', 'openai_api_key', 'api_key', 'key']:
-                    if key in secret_data:
-                        logger.info(f" Successfully retrieved '{key}' from secret: {secret_name}")
-                        return secret_data[key]
-                # If no standard key found, log available keys and return None
-                available_keys = list(secret_data.keys())
-                logger.error(f" AI agent API key not found in secret. Available keys: {available_keys}")
-                logger.error(f"   Expected key: 'ai_agent_api_key'")
-                return None
-            else:
-                # If it's a plain string
-                logger.info(f" Successfully retrieved secret: {secret_name}")
-                return secret_data
+            try:
+                secret_data = json.loads(response['SecretString'])
+                # If it's a JSON object, look for the specific key
+                if isinstance(secret_data, dict):
+                    if secret_key:
+                        # Look for the specific key requested
+                        if secret_key in secret_data:
+                            logger.info(f" Successfully retrieved '{secret_key}' from secret: {secret_name}")
+                            return secret_data[secret_key]
+                        else:
+                            available_keys = list(secret_data.keys())
+                            logger.error(f" Key '{secret_key}' not found in secret. Available keys: {available_keys}")
+                            return None
+                    else:
+                        # For backward compatibility - look for AI agent API key
+                        if 'ai_agent_api_key' in secret_data:
+                            logger.info(f" Successfully retrieved 'ai_agent_api_key' from secret: {secret_name}")
+                            return secret_data['ai_agent_api_key']
+                        # Try other common key names as fallback
+                        for key in ['OPENAI_API_KEY', 'openai_api_key', 'api_key', 'key']:
+                            if key in secret_data:
+                                logger.info(f" Successfully retrieved '{key}' from secret: {secret_name}")
+                                return secret_data[key]
+                        # If no standard key found, log available keys and return None
+                        available_keys = list(secret_data.keys())
+                        logger.error(f" AI agent API key not found in secret. Available keys: {available_keys}")
+                        logger.error(f"   Expected key: 'ai_agent_api_key'")
+                        return None
+                else:
+                    # If it's a plain string
+                    logger.info(f" Successfully retrieved secret: {secret_name}")
+                    return secret_data
+            except json.JSONDecodeError:
+                # If it's not JSON, treat as plain string
+                logger.info(f" Successfully retrieved plain text secret: {secret_name}")
+                return response['SecretString']
         elif 'SecretBinary' in response:
             # Handle binary secrets if needed
             logger.info(f" Successfully retrieved binary secret: {secret_name}")
@@ -138,40 +156,60 @@ def get_secret_from_aws(secret_name: str, region_name: str) -> str:
 app_env, env_file_path = load_environment_config()
 
 # Configuration for AWS Secrets Manager - read from .env files
-OPENAI_SECRET_NAME = os.getenv("OPENAI_SECRET_NAME", "test/edgp/secret2")
+OPENAI_SECRET_NAME = os.getenv("OPENAI_SECRET_NAME", "sit/edgp/secret")
 AWS_REGION = os.getenv("AWS_REGION", "ap-southeast-1")
-USE_AWS_SECRETS = os.getenv("USE_AWS_SECRETS", "true").lower() == "true"
 
-# Get OPENAI_API_KEY from AWS Secrets Manager or fallback to environment variable
-OPENAI_API_KEY = None
-if USE_AWS_SECRETS:
-    logger.info("🔐 Retrieving AI agent API key from AWS Secrets Manager...")
-    OPENAI_API_KEY = get_secret_from_aws(OPENAI_SECRET_NAME, AWS_REGION)
-    
-    if not OPENAI_API_KEY:
-        logger.warning("⚠️ Failed to retrieve AI agent API key from AWS Secrets Manager")
-        logger.warning("   Trying fallback environment variable: OPENAI_API_KEY")
-        OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-        
-        if OPENAI_API_KEY:
-            logger.info(" Using OPENAI_API_KEY from environment variable as fallback")
-        else:
-            logger.error(" AI agent API key not available from either:")
-            logger.error(f"   1. AWS Secrets Manager: {OPENAI_SECRET_NAME}")
-            logger.error("   2. Environment variable: OPENAI_API_KEY")
-            logger.error("   Please ensure:")
-            logger.error(f"   - Secret '{OPENAI_SECRET_NAME}' exists in AWS Secrets Manager with key 'ai_agent_api_key'")
-            logger.error(f"   - AWS credentials are configured correctly")
-        logger.error(f"   - OR set OPENAI_API_KEY environment variable for testing")
-        raise Exception(f"AI agent API key not available")
-else:
-    logger.warning(" AWS Secrets Manager is disabled (USE_AWS_SECRETS=false)")
-    logger.info(" Using OPENAI_API_KEY from environment variable...")
+# Always fetch credentials from AWS Secrets Manager with environment variable fallbacks
+logger.info("🔐 Retrieving credentials from AWS Secrets Manager...")
+
+# Get OpenAI API Key
+OPENAI_API_KEY = get_secret_from_aws(OPENAI_SECRET_NAME, AWS_REGION)
+
+if not OPENAI_API_KEY:
+    logger.warning(" Failed to retrieve AI agent API key from AWS Secrets Manager")
+    logger.warning("   Trying fallback environment variable: OPENAI_API_KEY")
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     
-    if not OPENAI_API_KEY:
-        logger.error(" OPENAI_API_KEY environment variable is not set")
-        raise Exception("AI agent API key must be provided via OPENAI_API_KEY environment variable when AWS Secrets Manager is disabled")
+    if OPENAI_API_KEY:
+        logger.info(" Using OPENAI_API_KEY from environment variable as fallback")
+    else:
+        logger.error(" AI agent API key not available from either:")
+        logger.error(f"   1. AWS Secrets Manager: {OPENAI_SECRET_NAME}")
+        logger.error("   2. Environment variable: OPENAI_API_KEY")
+        logger.error("   Please ensure:")
+        logger.error(f"   - Secret '{OPENAI_SECRET_NAME}' exists in AWS Secrets Manager with key 'ai_agent_api_key'")
+        logger.error(f"   - AWS credentials are configured correctly")
+        logger.error(f"   - OR set OPENAI_API_KEY environment variable for testing")
+        logger.error("   For Kubernetes deployments:")
+        logger.error("     - Check IAM role has secretsmanager:GetSecretValue permission")
+        logger.error("     - Verify service account annotations: eks.amazonaws.com/role-arn")
+        logger.error("     - Ensure pod uses the correct service account")
+        raise Exception(f"AI agent API key not available")
+
+# Get JWT Public Key
+logger.info("🔐 Retrieving JWT public key from AWS Secrets Manager...")
+JWT_PUBLIC_KEY = get_secret_from_aws(OPENAI_SECRET_NAME, AWS_REGION, 'jwt_public_key')
+
+if not JWT_PUBLIC_KEY:
+    logger.warning("⚠️ Failed to retrieve JWT public key from AWS Secrets Manager")
+    logger.warning("   Trying fallback environment variable: JWT_PUBLIC_KEY")
+    JWT_PUBLIC_KEY = os.getenv("JWT_PUBLIC_KEY")
+    
+    if JWT_PUBLIC_KEY:
+        logger.info(" Using JWT_PUBLIC_KEY from environment variable as fallback")
+    else:
+        logger.error(" JWT public key not available from either:")
+        logger.error(f"   1. AWS Secrets Manager: {OPENAI_SECRET_NAME} (key: jwt_public_key)")
+        logger.error("   2. Environment variable: JWT_PUBLIC_KEY")
+        logger.error("   Please ensure:")
+        logger.error(f"   - Secret '{OPENAI_SECRET_NAME}' exists in AWS Secrets Manager with key 'jwt_public_key'")
+        logger.error(f"   - AWS credentials are configured correctly")
+        logger.error(f"   - OR set JWT_PUBLIC_KEY environment variable for testing")
+        logger.error("   For Kubernetes deployments:")
+        logger.error("     - Check IAM role has secretsmanager:GetSecretValue permission")
+        logger.error("     - Verify service account annotations: eks.amazonaws.com/role-arn")
+        logger.error("     - Ensure pod uses the correct service account")
+        raise Exception(f"JWT public key not available")
 
 RULE_MICROSERVICE_URL = os.getenv("RULE_URL")
 
@@ -180,14 +218,26 @@ if RULE_MICROSERVICE_URL and RULE_MICROSERVICE_URL.startswith("{") and RULE_MICR
     RULE_MICROSERVICE_URL = "http://localhost:8090/api/rules"  # Default fallback
 
 # Log configuration status
-if OPENAI_API_KEY:
+if OPENAI_API_KEY and JWT_PUBLIC_KEY:
     logger.info(" Configuration Status:")
     logger.info(f"   Environment: {app_env}")
     logger.info(f"   Environment file: {env_file_path}")
     logger.info(f"   Secret Name: {OPENAI_SECRET_NAME}")
-    logger.info(f"   Key starts with: {OPENAI_API_KEY[:8]}...")
+    logger.info(f"   OpenAI API Key starts with: {OPENAI_API_KEY[:8]}...")
+    logger.info(f"   JWT Public Key configured: Yes ({len(JWT_PUBLIC_KEY)} characters)")
+elif OPENAI_API_KEY:
+    logger.warning(" Partial Configuration Status:")
+    logger.info(f"   Environment: {app_env}")
+    logger.info(f"   OpenAI API Key: Available")
+    logger.error("   JWT Public Key: Missing")
+elif JWT_PUBLIC_KEY:
+    logger.warning(" Partial Configuration Status:")
+    logger.info(f"   Environment: {app_env}")
+    logger.error("   OpenAI API Key: Missing")
+    logger.info("   JWT Public Key: Available")
 else:
-    logger.error(" OPENAI_API_KEY is not available - service cannot start")
+    logger.error(" Critical configuration missing - service cannot start")
+    logger.error("   Both OpenAI API Key and JWT Public Key are required")
 
 class Settings(BaseSettings):
     """
@@ -235,7 +285,7 @@ class Settings(BaseSettings):
     llm_temperature: float = Field(default=0.3, alias="LLM_TEMPERATURE")
     
     # JWT Authentication Settings
-    jwt_public_key: str = Field(alias="JWT_PUBLIC_KEY")
+    jwt_public_key: str = Field(default=JWT_PUBLIC_KEY if JWT_PUBLIC_KEY else "")
     jwt_algorithm: str = "RS256"
     
     # Authentication microservice URL
@@ -278,6 +328,7 @@ logger.info(" Settings validation:")
 logger.info(f"   APP_ENV: {app_env}")
 logger.info(f"   Environment file loaded: {env_file_path if os.path.exists(env_file_path) else 'None'}")
 logger.info(f"   JWT public key configured: {'Yes' if settings.jwt_public_key else 'No'}")
+logger.info(f"   JWT public key source: {'AWS Secrets Manager' if JWT_PUBLIC_KEY else 'Environment Variable'}")
 logger.info(f"   Admin API URL: {settings.admin_api_url}")
 logger.info(f"   Rule API URL: {settings.rule_api_url}")
 logger.info(f"   Environment: {settings.environment}")
