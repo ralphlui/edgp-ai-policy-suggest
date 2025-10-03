@@ -1,335 +1,155 @@
 """
 Configuration settings for the EDGP AI Policy Suggestion API.
-Uses Pydantic Settings for environment variable management and AWS Secrets Mana        else:
-            logger.error(" AI agent API key not available from either:")
-            logger.error(f"   1. AWS Secrets Manager: {OPENAI_SECRET_NAME}")
-            logger.error("   2. Environment variable: OPENAI_API_KEY")
-            logger.error("   Please ensure:")
-            logger.error(f"   - Secret '{OPENAI_SECRET_NAME}' exists in AWS Secrets Manager with key 'ai_agent_api_key'")
-            logger.error(f"   - AWS credentials are configured correctly")
-            logger.error(f"   - OR set OPENAI_API_KEY environment variable for testing")
-            logger.error("   For Kubernetes deployments:")
-            logger.error("     - Check IAM role has secretsmanager:GetSecretValue permission")
-            logger.error("     - Verify service account annotations: eks.amazonaws.com/role-arn")
-            logger.error("     - Ensure pod uses the correct service account")
-            raise Exception(f"AI agent API key not available")ecure API key storage.
+Uses Pydantic Settings for env management. No network calls at import time.
 """
+
+from __future__ import annotations
 
 from pydantic_settings import BaseSettings
 from pydantic import ConfigDict, field_validator, Field
-from typing import List, Union
-import json
+from typing import List, Optional
 import os
-from pathlib import Path
+import json
 from dotenv import load_dotenv
-import boto3
-from botocore.exceptions import ClientError
 import logging
 
 logger = logging.getLogger(__name__)
 
+
 def load_environment_config():
     """
-    Load environment configuration based on APP_ENV
-    Priority: APP_ENV -> .env.{APP_ENV} -> fallback to .env.development -> .env
+    Load env based on APP_ENV.
+    Priority: Existing ENV vars -> .env.{APP_ENV} -> .env.development -> .env
     """
     app_env = os.getenv("APP_ENV", "development")
     env_file_path = f".env.{app_env}"
-    
-    logger.info(f" Initializing environment: {app_env}")
-    
-    # Check if the environment file exists
+
+    logger.info(" Initializing environment: %s", app_env)
+
     if os.path.exists(env_file_path):
-        logger.info(f" Loading environment from: {env_file_path}")
-        load_dotenv(dotenv_path=env_file_path, override=True)
+        logger.info(" Loading environment from: %s", env_file_path)
+        load_dotenv(dotenv_path=env_file_path, override=False)  # Don't override existing env vars
     else:
-        logger.warning(f" Environment file {env_file_path} not found")
-        # Try fallback to .env.development
-        fallback_env = ".env.development"
-        if os.path.exists(fallback_env):
-            logger.info(f" Falling back to: {fallback_env}")
-            load_dotenv(dotenv_path=fallback_env, override=True)
-            app_env = "development"  # Update the env variable
+        logger.warning(" Environment file %s not found", env_file_path)
+        fallback = ".env.development"
+        if os.path.exists(fallback):
+            logger.info(" Falling back to: %s", fallback)
+            load_dotenv(dotenv_path=fallback, override=False)  # Don't override existing env vars
+            app_env = "development"
         else:
-            logger.warning(" No environment files found, using system environment variables only")
-    
-    # Also load a base .env file if it exists (for common settings)
-    base_env_file = ".env"
-    if os.path.exists(base_env_file):
-        logger.info(f" Loading base environment from: {base_env_file}")
-        load_dotenv(dotenv_path=base_env_file, override=False)  # Don't override specific env settings
-    
+            logger.warning(" No environment files found, using system env only")
+
+    base = ".env"
+    if os.path.exists(base):
+        logger.info(" Loading base environment from: %s", base)
+        load_dotenv(dotenv_path=base, override=False)
+
     return app_env, env_file_path
 
-def get_secret_from_aws(secret_name: str, region_name: str, secret_key: str = None) -> str:
-    """
-    Retrieve a secret from AWS Secrets Manager
-    
-    Args:
-        secret_name: Name of the secret in AWS Secrets Manager
-        region_name: AWS region where the secret is stored
-        secret_key: Specific key to extract from JSON secret (optional)
-        
-    Returns:
-        Secret value as string, or None if retrieval fails
-    """
-    try:
-        # Create a Secrets Manager client
-        session = boto3.session.Session()
-        client = session.client(
-            service_name='secretsmanager',
-            region_name=region_name
-        )
-        
-        logger.info(f" Attempting to retrieve secret: {secret_name}")
-        if secret_key:
-            logger.info(f"   Looking for key: {secret_key}")
-        
-        response = client.get_secret_value(SecretId=secret_name)
-        
-        # Parse the secret value
-        if 'SecretString' in response:
-            try:
-                secret_data = json.loads(response['SecretString'])
-                # If it's a JSON object, look for the specific key
-                if isinstance(secret_data, dict):
-                    if secret_key:
-                        # Look for the specific key requested
-                        if secret_key in secret_data:
-                            logger.info(f" Successfully retrieved '{secret_key}' from secret: {secret_name}")
-                            return secret_data[secret_key]
-                        else:
-                            available_keys = list(secret_data.keys())
-                            logger.error(f" Key '{secret_key}' not found in secret. Available keys: {available_keys}")
-                            return None
-                    else:
-                        # For backward compatibility - look for AI agent API key
-                        if 'ai_agent_api_key' in secret_data:
-                            logger.info(f" Successfully retrieved 'ai_agent_api_key' from secret: {secret_name}")
-                            return secret_data['ai_agent_api_key']
-                        # Try other common key names as fallback
-                        for key in ['OPENAI_API_KEY', 'openai_api_key', 'api_key', 'key']:
-                            if key in secret_data:
-                                logger.info(f" Successfully retrieved '{key}' from secret: {secret_name}")
-                                return secret_data[key]
-                        # If no standard key found, log available keys and return None
-                        available_keys = list(secret_data.keys())
-                        logger.error(f" AI agent API key not found in secret. Available keys: {available_keys}")
-                        logger.error(f"   Expected key: 'ai_agent_api_key'")
-                        return None
-                else:
-                    # If it's a plain string
-                    logger.info(f" Successfully retrieved secret: {secret_name}")
-                    return secret_data
-            except json.JSONDecodeError:
-                # If it's not JSON, treat as plain string
-                logger.info(f" Successfully retrieved plain text secret: {secret_name}")
-                return response['SecretString']
-        elif 'SecretBinary' in response:
-            # Handle binary secrets if needed
-            logger.info(f" Successfully retrieved binary secret: {secret_name}")
-            return response['SecretBinary'].decode('utf-8')
-        
-        logger.warning(f" Secret {secret_name} retrieved but no valid content found")
-        return None
-        
-    except ClientError as e:
-        error_code = e.response['Error']['Code']
-        if error_code == 'DecryptionFailureException':
-            logger.error(f" Failed to decrypt secret {secret_name}: {e}")
-        elif error_code == 'InternalServiceErrorException':
-            logger.error(f" AWS Secrets Manager internal error for {secret_name}: {e}")
-        elif error_code == 'InvalidParameterException':
-            logger.error(f" Invalid parameter for secret {secret_name}: {e}")
-        elif error_code == 'InvalidRequestException':
-            logger.error(f" Invalid request for secret {secret_name}: {e}")
-        elif error_code == 'ResourceNotFoundException':
-            logger.error(f" Secret {secret_name} not found in AWS Secrets Manager")
-        else:
-            logger.error(f" Unexpected error retrieving secret {secret_name}: {e}")
-        return None
-    except Exception as e:
-        logger.error(f" Unexpected error retrieving secret {secret_name}: {e}")
-        return None
 
-# Load environment configuration using APP_ENV
+# Load env files but DO NOT fetch secrets here
 app_env, env_file_path = load_environment_config()
 
-# Configuration for AWS Secrets Manager - read from .env files
 OPENAI_SECRET_NAME = os.getenv("OPENAI_SECRET_NAME", "sit/edgp/secret")
-AWS_REGION = os.getenv("AWS_REGION", "ap-southeast-1")
+AWS_REGION = os.getenv("AWS_REGION", os.getenv("AWS_REGION", "ap-southeast-1"))
 
-# Always fetch credentials from AWS Secrets Manager with environment variable fallbacks
-logger.info("🔐 Retrieving credentials from AWS Secrets Manager...")
+logger.info(" Configuration Status:")
+logger.info("   Environment: %s", app_env)
+logger.info("   Environment file: %s", env_file_path)
+logger.info("   Secret Name: %s", OPENAI_SECRET_NAME)
+# Note: OpenAI API Key and JWT Public Key will be loaded from AWS Secrets Manager at runtime
+logger.info("   AWS Secrets Manager configured: %s", bool(AWS_REGION))
 
-# Get OpenAI API Key
-OPENAI_API_KEY = get_secret_from_aws(OPENAI_SECRET_NAME, AWS_REGION)
-
-if not OPENAI_API_KEY:
-    logger.warning(" Failed to retrieve AI agent API key from AWS Secrets Manager")
-    logger.warning("   Trying fallback environment variable: OPENAI_API_KEY")
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-    
-    if OPENAI_API_KEY:
-        logger.info(" Using OPENAI_API_KEY from environment variable as fallback")
-    else:
-        logger.error(" AI agent API key not available from either:")
-        logger.error(f"   1. AWS Secrets Manager: {OPENAI_SECRET_NAME}")
-        logger.error("   2. Environment variable: OPENAI_API_KEY")
-        logger.error("   Please ensure:")
-        logger.error(f"   - Secret '{OPENAI_SECRET_NAME}' exists in AWS Secrets Manager with key 'ai_agent_api_key'")
-        logger.error(f"   - AWS credentials are configured correctly")
-        logger.error(f"   - OR set OPENAI_API_KEY environment variable for testing")
-        logger.error("   For Kubernetes deployments:")
-        logger.error("     - Check IAM role has secretsmanager:GetSecretValue permission")
-        logger.error("     - Verify service account annotations: eks.amazonaws.com/role-arn")
-        logger.error("     - Ensure pod uses the correct service account")
-        raise Exception(f"AI agent API key not available")
-
-# Get JWT Public Key
-logger.info("🔐 Retrieving JWT public key from AWS Secrets Manager...")
-JWT_PUBLIC_KEY = get_secret_from_aws(OPENAI_SECRET_NAME, AWS_REGION, 'jwt_public_key')
-
-if not JWT_PUBLIC_KEY:
-    logger.warning("⚠️ Failed to retrieve JWT public key from AWS Secrets Manager")
-    logger.warning("   Trying fallback environment variable: JWT_PUBLIC_KEY")
-    JWT_PUBLIC_KEY = os.getenv("JWT_PUBLIC_KEY")
-    
-    if JWT_PUBLIC_KEY:
-        logger.info(" Using JWT_PUBLIC_KEY from environment variable as fallback")
-    else:
-        logger.error(" JWT public key not available from either:")
-        logger.error(f"   1. AWS Secrets Manager: {OPENAI_SECRET_NAME} (key: jwt_public_key)")
-        logger.error("   2. Environment variable: JWT_PUBLIC_KEY")
-        logger.error("   Please ensure:")
-        logger.error(f"   - Secret '{OPENAI_SECRET_NAME}' exists in AWS Secrets Manager with key 'jwt_public_key'")
-        logger.error(f"   - AWS credentials are configured correctly")
-        logger.error(f"   - OR set JWT_PUBLIC_KEY environment variable for testing")
-        logger.error("   For Kubernetes deployments:")
-        logger.error("     - Check IAM role has secretsmanager:GetSecretValue permission")
-        logger.error("     - Verify service account annotations: eks.amazonaws.com/role-arn")
-        logger.error("     - Ensure pod uses the correct service account")
-        raise Exception(f"JWT public key not available")
-
-RULE_MICROSERVICE_URL = os.getenv("RULE_URL")
-
-if RULE_MICROSERVICE_URL and RULE_MICROSERVICE_URL.startswith("{") and RULE_MICROSERVICE_URL.endswith("}"):
-    logger.warning(f" RULE_MICROSERVICE_URL contains placeholder value: {RULE_MICROSERVICE_URL}")
-    RULE_MICROSERVICE_URL = "http://localhost:8090/api/rules"  # Default fallback
-
-# Log configuration status
-if OPENAI_API_KEY and JWT_PUBLIC_KEY:
-    logger.info(" Configuration Status:")
-    logger.info(f"   Environment: {app_env}")
-    logger.info(f"   Environment file: {env_file_path}")
-    logger.info(f"   Secret Name: {OPENAI_SECRET_NAME}")
-    logger.info(f"   OpenAI API Key starts with: {OPENAI_API_KEY[:8]}...")
-    logger.info(f"   JWT Public Key configured: Yes ({len(JWT_PUBLIC_KEY)} characters)")
-elif OPENAI_API_KEY:
-    logger.warning(" Partial Configuration Status:")
-    logger.info(f"   Environment: {app_env}")
-    logger.info(f"   OpenAI API Key: Available")
-    logger.error("   JWT Public Key: Missing")
-elif JWT_PUBLIC_KEY:
-    logger.warning(" Partial Configuration Status:")
-    logger.info(f"   Environment: {app_env}")
-    logger.error("   OpenAI API Key: Missing")
-    logger.info("   JWT Public Key: Available")
-else:
-    logger.error(" Critical configuration missing - service cannot start")
-    logger.error("   Both OpenAI API Key and JWT Public Key are required")
 
 class Settings(BaseSettings):
     """
-    Application settings with environment variable support and field aliases.
-    Supports dot-notation environment variables for Kubernetes compatibility.
+    Application settings with env var support and field aliases.
+    No network calls/secret fetch inside this class.
     """
-    
+
     model_config = ConfigDict(
         env_file=[env_file_path, ".env"] if os.path.exists(env_file_path) else [".env"],
-        env_file_encoding='utf-8',
+        env_file_encoding="utf-8",
         case_sensitive=False,
-        extra='ignore'
+        extra="ignore",
     )
-    
-    # Server Configuration
-    host: str = Field(default="localhost", alias="HOST")
-    port: int = Field(default=8091, alias="PORT")
+
+    # Server
+    host: str = Field(default=os.getenv("HOST", "localhost"), alias="HOST")
+    port: int = Field(default=int(os.getenv("PORT", "8091")), alias="PORT")
     environment: str = Field(default=app_env, alias="ENVIRONMENT")
-    
-    # API Configuration
-    api_title: str = Field(default="EDGP Policy Suggestion API", alias="API_TITLE")
-    api_version: str = Field(default="1.0.0", alias="API_VERSION")
-    api_description: str = Field(default="Data Quality Validation API using Great Expectations rules", alias="API_DESCRIPTION")
-    
-    # CORS Configuration
-    allowed_origins: List[str] = Field(
-        default=["http://localhost:3000", "http://localhost:8080"],
-        alias="ALLOWED_ORIGINS"
+
+    # API
+    api_title: str = Field(default=os.getenv("API_TITLE", "EDGP Policy Suggestion API"), alias="API_TITLE")
+    api_version: str = Field(default=os.getenv("API_VERSION", "1.0.0"), alias="API_VERSION")
+    api_description: str = Field(
+        default=os.getenv("API_DESCRIPTION", "Data Quality Validation API using Great Expectations rules"),
+        alias="API_DESCRIPTION",
     )
-    
-    # AWS Configuration
-    aws_region: str = Field(default="ap-southeast-1", alias="AWS_REGION")
-    aoss_host: str = Field(alias="AOSS_HOST")
-    aws_access_key_id: str = Field(alias="AWS_ACCESS_KEY_ID")
-    aws_secret_access_key: str = Field(alias="AWS_SECRET_ACCESS_KEY")
-    
-    # OpenSearch Configuration
-    opensearch_index: str = Field(default="mdm-columns", alias="OPENSEARCH_INDEX")
-    embed_model: str = Field(default="text-embedding-3-small", alias="EMBED_MODEL")
-    embed_dim: int = Field(default=1536, alias="EMBED_DIM")
-    
-    # LLM Model Configuration
-    schema_llm_model: str = Field(default="gpt-4", alias="SCHEMA_LLM_MODEL")
-    rules_llm_model: str = Field(default="gpt-4o-mini", alias="RULES_LLM_MODEL")
-    llm_temperature: float = Field(default=0.3, alias="LLM_TEMPERATURE")
-    
-    # JWT Authentication Settings
-    jwt_public_key: str = Field(default=JWT_PUBLIC_KEY if JWT_PUBLIC_KEY else "")
+
+    # CORS
+    allowed_origins: List[str] = Field(
+        default_factory=lambda: Settings._parse_allowed_origins_default(),
+        alias="ALLOWED_ORIGINS",
+    )
+
+    @staticmethod
+    def _parse_allowed_origins_default() -> List[str]:
+        origins_env = os.getenv("ALLOWED_ORIGINS", '["http://localhost:3000", "http://localhost:8080"]')
+        try:
+            if origins_env.startswith("[") and origins_env.endswith("]"):
+                return json.loads(origins_env)
+            return [o.strip() for o in origins_env.split(",")]
+        except Exception:
+            return ["http://localhost:3000", "http://localhost:8080"]
+
+    # AWS / AOSS
+    aws_region: str = Field(default=AWS_REGION, alias="AWS_REGION")
+    aoss_host: str = Field(default=os.getenv("AOSS_HOST", ""), alias="AOSS_HOST")
+
+    # Make these optional to support IRSA (no static keys required)
+    aws_access_key_id: Optional[str] = Field(default=None, alias="AWS_ACCESS_KEY_ID")
+    aws_secret_access_key: Optional[str] = Field(default=None, alias="AWS_SECRET_ACCESS_KEY")
+
+    # OpenSearch
+    opensearch_index: str = Field(default=os.getenv("OPENSEARCH_INDEX", "edgp-column-metadata-sit"), alias="OPENSEARCH_INDEX")
+    embed_model: str = Field(default=os.getenv("EMBED_MODEL", "text-embedding-3-small"), alias="EMBED_MODEL")
+    embed_dim: int = Field(default=int(os.getenv("EMBED_DIM", "1536")), alias="EMBED_DIM")
+
+    # LLM
+    schema_llm_model: str = Field(default=os.getenv("SCHEMA_LLM_MODEL", "gpt-4o-mini"), alias="SCHEMA_LLM_MODEL")
+    rules_llm_model: str = Field(default=os.getenv("RULES_LLM_MODEL", "gpt-4o-mini"), alias="RULES_LLM_MODEL")
+    llm_temperature: float = Field(default=float(os.getenv("LLM_TEMPERATURE", "0.3")), alias="LLM_TEMPERATURE")
+
+    # JWT — comes from AWS Secrets Manager at runtime via aws_secrets_service.get_jwt_public_key()
+    jwt_public_key: str = Field(default="", alias="JWT_PUBLIC_KEY")  # Placeholder, real key from AWS
     jwt_algorithm: str = "RS256"
-    
-    # Authentication microservice URL
-    admin_api_url: str = Field(alias="ADMIN_URL")
-    
-    # Rule microservice URL
-    rule_api_url: str = Field(alias="RULE_URL")
-    
+
+    # Service URLs
+    admin_api_url: str = Field(default=os.getenv("ADMIN_URL", ""), alias="ADMIN_URL")
+    rule_api_url: str = Field(default=os.getenv("RULE_URL", ""), alias="RULE_URL")
+
     # Logging
-    log_level: str = Field(default="info", alias="LOG_LEVEL")
-    
-    @field_validator('allowed_origins', mode='before')
+    log_level: str = Field(default=os.getenv("LOG_LEVEL", "info"), alias="LOG_LEVEL")
+
+    @field_validator("allowed_origins", mode="before")
     @classmethod
     def parse_allowed_origins(cls, v) -> List[str]:
-        """Parse ALLOWED_ORIGINS from string representation of list"""
         if isinstance(v, str):
             try:
-                # Handle JSON-like string format
-                import json
                 return json.loads(v)
             except json.JSONDecodeError:
-                # Handle comma-separated format
-                return [origin.strip() for origin in v.split(',')]
-        return v
-    
-    @field_validator('jwt_public_key', mode='before')
-    @classmethod
-    def parse_jwt_public_key(cls, v) -> str:
-        """Parse JWT public key and handle escaped newlines"""
-        if isinstance(v, str):
-            # Replace escaped newlines with actual newlines
-            return v.replace('\\n', '\n')
+                return [origin.strip() for origin in v.split(",")]
         return v
 
-# Create settings instance
+
+# One global settings instance
 settings = Settings()
 
-# Log settings validation
 logger.info(" Settings validation:")
-logger.info(f"   APP_ENV: {app_env}")
-logger.info(f"   Environment file loaded: {env_file_path if os.path.exists(env_file_path) else 'None'}")
-logger.info(f"   JWT public key configured: {'Yes' if settings.jwt_public_key else 'No'}")
-logger.info(f"   JWT public key source: {'AWS Secrets Manager' if JWT_PUBLIC_KEY else 'Environment Variable'}")
-logger.info(f"   Admin API URL: {settings.admin_api_url}")
-logger.info(f"   Rule API URL: {settings.rule_api_url}")
-logger.info(f"   Environment: {settings.environment}")
-logger.info(f"   Log level: {settings.log_level}")
+logger.info("   APP_ENV: %s", app_env)
+logger.info("   Environment file loaded: %s", env_file_path if os.path.exists(env_file_path) else "None")
+logger.info("   Admin API URL: %s", settings.admin_api_url)
+logger.info("   Rule API URL: %s", settings.rule_api_url)
+logger.info("   Environment: %s", settings.environment)
+logger.info("   Log level: %s", settings.log_level)

@@ -66,27 +66,34 @@ class JWTTokenValidator:
         self.public_key = None
         self.algorithm = settings.jwt_algorithm
         self.auth_service_url = settings.admin_api_url
-        self._load_public_key()
+        # Don't load public key here - do it lazily
     
     def _load_public_key(self):
-        """Load RSA public key from configuration"""
+        """Load RSA public key from configuration lazily"""
         try:
+            # First try getting from AWS Secrets Manager
+            from app.core.aws_secrets_service import get_jwt_public_key
+            jwt_key = get_jwt_public_key()
+            
+            if jwt_key:
+                # JWT key from AWS is now properly formatted with PEM headers
+                self.public_key = jwt_key.strip()
+                logger.info(" JWT public key loaded successfully from AWS Secrets Manager")
+                logger.debug(" Key format check - starts with PEM header: %s", 
+                           self.public_key.startswith('-----BEGIN'))
+                return
+            
+            # Fallback to environment variable
             if settings.jwt_public_key:
-                # Handle both PEM format and base64 encoded keys
+                # Environment variable might have PEM format or raw format
                 public_key_str = settings.jwt_public_key.strip()
                 
-                # If it doesn't start with -----BEGIN, assume it's base64 encoded
+                # If it doesn't have PEM headers, add them
                 if not public_key_str.startswith('-----BEGIN'):
-                    # Convert base64 key to PEM format
-                    pem_key = f"-----BEGIN PUBLIC KEY-----\n"
-                    # Split the base64 string into 64-character lines
-                    for i in range(0, len(public_key_str), 64):
-                        pem_key += public_key_str[i:i+64] + "\n"
-                    pem_key += "-----END PUBLIC KEY-----"
-                    public_key_str = pem_key
+                    public_key_str = f"-----BEGIN PUBLIC KEY-----\n{public_key_str}\n-----END PUBLIC KEY-----"
                 
                 self.public_key = public_key_str
-                logger.info(" JWT public key loaded successfully")
+                logger.info(" JWT public key loaded successfully from environment")
             else:
                 logger.warning(" No JWT public key configured - token validation will fail")
                 
@@ -108,13 +115,17 @@ class JWTTokenValidator:
             HTTPException: If token is invalid or verification fails
         """
         try:
+            # Load public key lazily
+            if not self.public_key:
+                self._load_public_key()
+            
             if not self.public_key:
                 raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="JWT public key not configured"
                 )
             
-            # Decode and verify the token
+            # Decode and verify the JWT token
             payload = jwt.decode(
                 token,
                 self.public_key,
@@ -123,20 +134,23 @@ class JWTTokenValidator:
                     "verify_signature": True,
                     "verify_exp": True,
                     "verify_iat": True,
-                    "require": ["exp", "iat", "userEmail", "scope"]
+                    "require": ["exp", "iat", "userEmail", "scope", "sub"]  # Require 'sub' field for user ID
                 }
             )
             
-            logger.debug(f" JWT token decoded successfully for user: {payload.get('userEmail', 'unknown')}")
+            logger.debug(f"🔓 JWT token decoded successfully for user: {payload.get('userEmail', 'unknown')}")
             return payload
             
         except jwt.ExpiredSignatureError:
-            logger.warning(" JWT token has expired")
+            logger.warning("⏰ JWT token has expired")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="JWT token is expired",
                 headers={"WWW-Authenticate": "Bearer"}
             )
+        except HTTPException:
+            # Re-raise HTTPExceptions (like our "JWT public key not configured" error)
+            raise
         except jwt.InvalidSignatureError:
             logger.warning(" JWT token has invalid signature")
             raise HTTPException(
@@ -145,7 +159,7 @@ class JWTTokenValidator:
                 headers={"WWW-Authenticate": "Bearer"}
             )
         except jwt.MissingRequiredClaimError as e:
-            logger.warning(f" JWT token missing required claim: {e}")
+            logger.warning(f"📋 JWT token missing required claim: {e}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=f"JWT token missing required claim: {e}",
@@ -287,7 +301,7 @@ class JWTTokenValidator:
                 logger.debug(f" User has manage:policy scope - access granted. All scopes: {user_scopes}")
                 return True
             
-            logger.warning(f"⚠️ User lacks manage:policy scope. Has: {user_scopes}")
+            logger.warning(f" User lacks manage:policy scope. Has: {user_scopes}")
             return False
             
         except Exception as e:
