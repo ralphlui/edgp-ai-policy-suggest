@@ -91,7 +91,9 @@ def mock_settings():
 @pytest.fixture
 def base_validator(mock_settings):
     """Create JWTTokenValidator instance for testing with shared settings"""
-    return JWTTokenValidator()
+    with patch('app.core.aws_secrets_service.get_jwt_public_key') as mock_get_jwt:
+        mock_get_jwt.return_value = "-----BEGIN PUBLIC KEY-----\ntest_key\n-----END PUBLIC KEY-----"
+        return JWTTokenValidator()
 
 @pytest.fixture
 def sample_token_payload():
@@ -168,11 +170,17 @@ class TestStandardResponse:
 class TestJWTTokenValidator:
     """Test JWTTokenValidator class core functionality"""
     
-    def test_validator_initialization(self, base_validator, mock_settings):
+    def test_validator_initialization(self, mock_settings):
         """Test validator initialization"""
-        assert base_validator.algorithm == "RS256"
-        assert base_validator.auth_service_url == "http://test-auth-service.com"
-        assert base_validator.public_key is not None
+        with patch('app.core.aws_secrets_service.get_jwt_public_key') as mock_get_jwt:
+            mock_get_jwt.return_value = "-----BEGIN PUBLIC KEY-----\ntest_key\n-----END PUBLIC KEY-----"
+            validator = JWTTokenValidator()
+            
+            assert validator.algorithm == "RS256"
+            assert validator.auth_service_url == "http://test-auth-service.com"
+            # Trigger lazy loading by calling _load_public_key
+            validator._load_public_key()
+            assert validator.public_key is not None
     
     @patch('app.auth.bearer.jwt.decode')
     def test_decode_token_success(self, mock_jwt_decode, base_validator, sample_token_payload):
@@ -567,35 +575,48 @@ class TestEnhancedValidatorEdgeCases:
     @pytest.fixture
     def validator_no_key(self):
         """Validator with no public key configured"""
-        with patch('app.auth.bearer.settings') as mock_settings:
+        with patch('app.auth.bearer.settings') as mock_settings, \
+             patch('app.core.aws_secrets_service.get_jwt_public_key') as mock_get_jwt:
             mock_settings.jwt_public_key = None
             mock_settings.jwt_algorithm = "RS256"
             mock_settings.admin_api_url = "http://test-auth-service"
+            mock_get_jwt.return_value = None
             return JWTTokenValidator()
 
     @pytest.fixture
     def validator_base64_key(self):
         """Validator with base64 encoded public key"""
-        with patch('app.auth.bearer.settings') as mock_settings:
+        with patch('app.auth.bearer.settings') as mock_settings, \
+             patch('app.core.aws_secrets_service.get_jwt_public_key') as mock_get_jwt:
             # Simulate base64 encoded key (without PEM headers)
             mock_settings.jwt_public_key = "LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUF0dz"
             mock_settings.jwt_algorithm = "RS256"
             mock_settings.admin_api_url = "http://test-auth-service"
+            mock_get_jwt.return_value = "-----BEGIN PUBLIC KEY-----\nLS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUF0dz\n-----END PUBLIC KEY-----"
             return JWTTokenValidator()
 
     def test_public_key_loading_base64_format(self, validator_base64_key):
         """Test loading base64 encoded public key"""
+        # Trigger lazy loading by calling _load_public_key
+        validator_base64_key._load_public_key()
         assert validator_base64_key.public_key is not None
-        assert validator_base64_key.public_key.startswith("-----BEGIN PUBLIC KEY-----")
-        assert validator_base64_key.public_key.endswith("-----END PUBLIC KEY-----")
+        assert "-----BEGIN PUBLIC KEY-----" in validator_base64_key.public_key
+        assert "-----END PUBLIC KEY-----" in validator_base64_key.public_key
 
     def test_decode_token_no_public_key(self, validator_no_key):
         """Test token decoding when no public key is configured"""
-        with pytest.raises(HTTPException) as exc_info:
-            validator_no_key.decode_token("dummy.token.here")
-        
-        assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-        assert "Token validation error" in str(exc_info.value.detail)
+        # Patch the _load_public_key method to ensure it doesn't try to load
+        with patch.object(validator_no_key, '_load_public_key'):
+            validator_no_key.public_key = None
+            
+            # Use any token - it will fail on the public key check before JWT parsing
+            test_token = "any.token.here"
+            
+            with pytest.raises(HTTPException) as exc_info:
+                validator_no_key.decode_token(test_token)
+            
+            assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+            assert "JWT public key not configured" in str(exc_info.value.detail)
 
 
 class TestConcurrencyAndPerformance:

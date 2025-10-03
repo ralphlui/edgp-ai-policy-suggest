@@ -4,6 +4,7 @@ Tests for app/tools/rule_tools.py module
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 import json
+import os
 
 
 class TestRuleToolsModule:
@@ -68,6 +69,7 @@ class TestRuleToolsModule:
         result = fetch_gx_rules.func("")
         
         assert isinstance(result, list)
+        assert len(result) > 0  # Should return default rules
 
     def test_format_gx_rules_valid_json(self):
         """Test formatting rules with valid JSON"""
@@ -187,8 +189,10 @@ class TestRuleToolsModule:
         assert len(result) > 0
         assert "ExpectColumnValuesToMatchRegex" in result[0]["rule_name"]
 
+    @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}, clear=False)
+    @patch('app.core.aws_secrets_service.require_openai_api_key', return_value='test-key')
     @patch('app.tools.rule_tools.ChatOpenAI')
-    def test_suggest_column_rules_mock(self, mock_chat_openai):
+    def test_suggest_column_rules_mock(self, mock_chat_openai, mock_require_api_key):
         """Test column rule suggestion with mocked OpenAI"""
         mock_llm = Mock()
         mock_response = Mock()
@@ -206,8 +210,10 @@ class TestRuleToolsModule:
         assert isinstance(result, str)
         mock_llm.invoke.assert_called_once()
 
+    @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}, clear=False)
+    @patch('app.core.aws_secrets_service.require_openai_api_key', return_value='test-key')
     @patch('app.tools.rule_tools.ChatOpenAI')
-    def test_suggest_column_names_only_mock(self, mock_chat_openai):
+    def test_suggest_column_names_only_mock(self, mock_chat_openai, mock_require_api_key):
         """Test column name suggestion with mocked OpenAI"""
         mock_llm = Mock()
         mock_response = Mock()

@@ -4,6 +4,7 @@ Tests for app/embedding/embedder.py module
 import pytest
 from unittest.mock import Mock, patch, AsyncMock
 import asyncio
+import os
 
 
 class TestEmbedderModule:
@@ -19,8 +20,10 @@ class TestEmbedderModule:
         from app.embedding.embedder import embed_column_names_batched_async
         assert callable(embed_column_names_batched_async)
 
+    @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}, clear=False)
+    @patch('app.core.aws_secrets_service.require_openai_api_key', return_value='test-key')
     @patch('app.embedding.embedder.OpenAIEmbeddings')
-    def test_embed_batch_mock(self, mock_embeddings):
+    def test_embed_batch_mock(self, mock_embeddings, mock_require_api_key):
         """Test _embed_batch function with mock"""
         mock_embedder = Mock()
         mock_embedder.embed_documents.return_value = [[0.1, 0.2], [0.3, 0.4]]
@@ -44,8 +47,10 @@ class TestEmbedderModule:
         assert isinstance(result, list)
         mock_embed_batch.assert_called()
 
+    @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}, clear=False)
+    @patch('app.core.aws_secrets_service.require_openai_api_key', return_value='test-key')
     @patch('app.embedding.embedder.OpenAIEmbeddings')
-    def test_embedder_configuration(self, mock_embeddings):
+    def test_embedder_configuration(self, mock_embeddings, mock_require_api_key):
         """Test embedder configuration"""
         mock_embedder = Mock()
         mock_embeddings.return_value = mock_embedder
@@ -101,9 +106,10 @@ class TestEmbedderModule:
             # Expected to fail with API key issues
             pass
 
-    @patch('app.embedding.embedder.OPENAI_API_KEY', 'test-key')
+    @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}, clear=False)
+    @patch('app.core.aws_secrets_service.require_openai_api_key', return_value='test-key')
     @patch('app.embedding.embedder.OpenAIEmbeddings')
-    def test_embed_batch_with_api_key(self, mock_embeddings):
+    def test_embed_batch_with_api_key(self, mock_embeddings, mock_api_key):
         """Test _embed_batch with mocked API key"""
         mock_embedder = Mock()
         mock_embedder.embed_documents.return_value = [[0.1, 0.2, 0.3]]

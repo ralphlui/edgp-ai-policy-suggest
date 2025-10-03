@@ -14,15 +14,45 @@ def fetch_gx_rules(query: str = "") -> list:
     try:
         rule_url = settings.rule_api_url or os.getenv("RULE_URL")
         if not rule_url or rule_url in ["{RULE_URL}", "RULE_URL"]:
+
             logger.warning("Rule Microservice URL not configured. Using empty rules list.")
             return []
+
+            logger.warning("Rule Microservice URL not configured. Using default rules.")
+            return _get_default_rules()
+
             
         resp = requests.get(rule_url, timeout=10)
         resp.raise_for_status()
         return resp.json()
+
     except requests.exceptions.RequestException as e:
         logger.warning(f"Rule Microservice not available at {rule_url}. Using empty rules list. Error: {e}")
         return []
+
+    except Exception as e:
+        logger.warning(f"Rule Microservice not available. Using default rules. Error: {e}")
+        return _get_default_rules()
+
+def _get_default_rules() -> list:
+    """Return default GX rules when service is unavailable"""
+    return [
+        {
+            "rule_name": "expect_column_values_to_not_be_null",
+            "description": "Validate that column values are not null",
+            "applies_to": ["all"]
+        },
+        {
+            "rule_name": "expect_column_values_to_be_of_type",
+            "description": "Validate column data type",
+            "applies_to": ["all"]
+        },
+        {
+            "rule_name": "expect_column_values_to_be_in_range",
+            "description": "Validate column values are within specified range",
+            "applies_to": ["numeric"]
+        }
+    ]
 
 @tool
 def suggest_column_rules(data_schema: dict, gx_rules: list) -> str:

@@ -121,7 +121,7 @@ class JWTTokenValidator:
             
             if not self.public_key:
                 raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="JWT public key not configured"
                 )
             
@@ -148,6 +148,9 @@ class JWTTokenValidator:
                 detail="JWT token is expired",
                 headers={"WWW-Authenticate": "Bearer"}
             )
+        except HTTPException:
+            # Re-raise HTTPExceptions (like our "JWT public key not configured" error)
+            raise
         except jwt.InvalidSignatureError:
             logger.warning(" JWT token has invalid signature")
             raise HTTPException(

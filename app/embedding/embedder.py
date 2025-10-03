@@ -4,6 +4,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential_jitter
 from langchain_community.embeddings import OpenAIEmbeddings
 from langchain.schema import Document
 from typing import List
+from langchain.schema import Document
 from app.core.config import settings
 from app.core.aws_secrets_service import require_openai_api_key
 import asyncio
