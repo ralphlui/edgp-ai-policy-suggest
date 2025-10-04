@@ -75,8 +75,8 @@ class Settings(BaseSettings):
     )
 
     # Server
-    host: str = Field(default=os.getenv("HOST", "localhost"), alias="HOST")
-    port: int = Field(default=int(os.getenv("PORT", "8091")), alias="PORT")
+    host: str = Field(default=os.getenv("HOST", "0.0.0.0"), alias="HOST")
+    port: int = Field(default=int(os.getenv("PORT", "8092")), alias="PORT")
     environment: str = Field(default=app_env, alias="ENVIRONMENT")
 
     # API

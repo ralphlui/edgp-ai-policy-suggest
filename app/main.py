@@ -102,3 +102,29 @@ def service_info():
     }
 
 app.include_router(router)
+
+
+if __name__ == "__main__":
+    import uvicorn
+    import os
+    from app.core.config import settings
+    
+    # Get configuration from settings (which reads from .env files)
+    host = settings.host  # Use host from settings (.env files)
+    port = settings.port  # Use port from settings (.env files)
+    log_level = os.getenv("LOG_LEVEL", "info").lower()
+    
+    logger.info(" Starting EDGP AI Policy Suggest Microservice...")
+    logger.info(f" Server will run on http://{host}:{port}")
+    logger.info(f" Server accessible from all IP addresses")
+    logger.info(f" Log level: {log_level}")
+    
+    # Run the application
+    uvicorn.run(
+        "app.main:app",
+        host=host,
+        port=port,
+        log_level=log_level,
+        access_log=True,
+        use_colors=True
+    )
