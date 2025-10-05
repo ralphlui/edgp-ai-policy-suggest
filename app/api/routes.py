@@ -222,7 +222,34 @@ async def create_domain(
                         "existing_columns": [col.get("column_name") for col in existing_columns],
                         "column_count": len(existing_columns),
                         "note": note,
-                        "case_conflict": existing_domain != normalized_domain
+                        "case_conflict": existing_domain != normalized_domain,
+                        "actions": {
+                            "extend_domain": {
+                                "description": "Add new columns to existing domain",
+                                "endpoint": "/api/aips/extend-domain",
+                                "method": "POST",
+                                "payload": {
+                                    "domain": existing_domain,
+                                    "new_columns": ["new_column1", "new_column2"],
+                                    "return_csv": True
+                                }
+                            },
+                            "suggest_extensions": {
+                                "description": "Get AI suggestions for additional columns",
+                                "endpoint": "/api/aips/suggest-extend-domain",
+                                "method": "POST",
+                                "payload": {
+                                    "domain": existing_domain,
+                                    "style": "standard",
+                                    "exclude_existing": True
+                                }
+                            },
+                            "view_domain": {
+                                "description": "View complete domain details",
+                                "endpoint": f"/api/aips/domain/{existing_domain}",
+                                "method": "GET"
+                            }
+                        }
                     }, status_code=409)  # 409 Conflict status for duplicate/conflicting resource
             except Exception as e:
                 logger.warning(f"Failed to check if domain exists: {e}")
@@ -824,5 +851,398 @@ async def download_csv_file(filename: str):
         return JSONResponse({
             "error": str(e),
             "message": "Failed to download CSV file"
+        }, status_code=500)
+
+
+@router.post("/api/aips/resuggest-domain-schema")
+async def regenerate_suggestions(request: Request):
+    """
+    Improve AI-powered domain schema suggestions with enhanced user preferences.
+    
+    Supports iterative improvement with user feedback and custom preferences:
+    - Style options: minimal, standard, comprehensive
+    - Column exclusions and keyword inclusions
+    - Iteration tracking for progressive refinement
+    - Smart filtering based on user satisfaction
+    """
+    try:
+        body = await request.json()
+        
+        # Validate required fields
+        if not body.get("business_description"):
+            return JSONResponse({
+                "error": "business_description is required"
+            }, status_code=400)
+        
+        # Extract user preferences
+        user_preferences = body.get("user_preferences", {})
+        
+        # Use enhanced schema suggester
+        from app.agents.schema_suggester import SchemaSuggesterEnhanced
+        
+        suggester = SchemaSuggesterEnhanced()
+        
+        # Generate enhanced schema with preferences
+        enhanced_schema = await suggester.bootstrap_schema_with_preferences(
+            business_description=body["business_description"],
+            user_preferences=user_preferences
+        )
+        
+        return JSONResponse({
+            "status": "success",
+            "message": "Enhanced schema suggestions generated successfully",
+            "iteration": enhanced_schema.get("iteration", 1),
+            "style": enhanced_schema.get("style", "standard"),
+            "total_columns": enhanced_schema.get("total_columns", 0),
+            "schema": enhanced_schema.get("columns", []),
+            "preferences_applied": enhanced_schema.get("preferences_applied", {}),
+            "suggestions": {
+                "next_iteration_tips": enhanced_schema.get("next_iteration_tips", []),
+                "style_recommendations": enhanced_schema.get("style_recommendations", [])
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in regenerate suggestions: {str(e)}")
+        return JSONResponse({
+            "error": str(e),
+            "message": "Failed to regenerate schema suggestions"
+        }, status_code=500)
+
+
+@router.put("/api/aips/extend-domain")
+async def extend_domain(request: Request):
+    """
+    Extend an existing domain with new columns using AI suggestions.
+    
+    Analyzes the existing domain schema and suggests complementary columns
+    that don't conflict with existing ones. Supports user preferences for
+    the type and style of new columns to add.
+    """
+    try:
+        body = await request.json()
+        
+        # Validate required fields
+        domain_name = body.get("domain")
+        if not domain_name:
+            return JSONResponse({
+                "error": "domain is required"
+            }, status_code=400)
+        
+        # Get existing domain schema first
+        store = get_store()
+        if store is None:
+            return JSONResponse({
+                "error": "OpenSearch store not available"
+            }, status_code=503)
+        
+        # Query for existing domain
+        query = {
+            "query": {
+                "term": {"metadata.domain": domain_name}
+            },
+            "size": 100,
+            "_source": ["column_name", "metadata", "sample_values"]
+        }
+        
+        response = store.client.search(index=store.index_name, body=query)
+        
+        if response["hits"]["total"]["value"] == 0:
+            return JSONResponse({
+                "error": f"Domain '{domain_name}' not found",
+                "message": "Cannot extend a domain that doesn't exist"
+            }, status_code=404)
+        
+        existing_columns = []
+        for hit in response["hits"]["hits"]:
+            source = hit["_source"]
+            existing_columns.append({
+                "column_name": source.get("column_name", "unknown"),
+                "type": source.get("metadata", {}).get("type", "string"),
+                "sample_values": source.get("sample_values", []),
+                "metadata": source.get("metadata", {})
+            })
+        
+        existing_domain = {
+            "found": True,
+            "columns": existing_columns
+        }
+        
+        if not existing_domain.get("found"):
+            return JSONResponse({
+                "error": f"Domain '{domain_name}' not found",
+                "message": "Cannot extend a domain that doesn't exist"
+            }, status_code=404)
+        
+        existing_columns = existing_domain.get("columns", [])
+        existing_column_names = [col.get("column_name", "") for col in existing_columns]
+        
+        # Get user-provided columns and extension preferences
+        user_provided_columns = body.get("columns", [])
+        extension_preferences = body.get("extension_preferences", {})
+        suggested_columns_count = extension_preferences.get("column_count", 3)
+        focus_area = extension_preferences.get("focus_area", "")
+        style = extension_preferences.get("style", "standard")
+        suggest_additional = body.get("suggest_additional", False)
+        
+        new_columns = []
+        user_columns_added = []
+        ai_suggested_columns = []
+        duplicates_skipped = []
+        
+        # Process user-provided columns first
+        if user_provided_columns:
+            for column_name in user_provided_columns:
+                if column_name.lower() in [col.lower() for col in existing_column_names]:
+                    duplicates_skipped.append(column_name)
+                    continue
+                
+                # Create basic column structure for user-provided columns
+                user_column = {
+                    "column_name": column_name,
+                    "type": "string",  # Default type, could be enhanced later
+                    "description": f"User-defined column: {column_name}",
+                    "sample_values": [],
+                    "source": "user_provided"
+                }
+                new_columns.append(user_column)
+                user_columns_added.append(column_name)
+        
+        # Generate AI suggestions if requested or if no user columns provided
+        if suggest_additional or (not user_provided_columns and not extension_preferences.get("no_ai_suggestions", False)):
+            from app.agents.schema_suggester import SchemaSuggesterEnhanced
+            suggester = SchemaSuggesterEnhanced()
+            
+            # Update exclude list to include user-provided columns
+            all_existing_columns = existing_column_names + user_columns_added
+            
+            # Create extension prompt
+            extension_description = f"""
+            Extend the existing domain '{domain_name}' with {suggested_columns_count} new columns.
+            
+            Existing columns: {', '.join(existing_column_names)}
+            User-provided columns: {', '.join(user_columns_added) if user_columns_added else 'None'}
+            
+            Focus area: {focus_area if focus_area else 'General business enhancement'}
+            
+            Generate columns that complement the existing schema without duplication.
+            """
+            
+            # Generate extension suggestions
+            user_preferences = {
+                "exclude_columns": all_existing_columns,  # Avoid duplicates
+                "style": style,
+                "column_count": suggested_columns_count,
+                "include_keywords": extension_preferences.get("include_keywords", []),
+                "iteration": extension_preferences.get("iteration", 1)
+            }
+            
+            extension_schema = await suggester.bootstrap_schema_with_preferences(
+                business_description=extension_description,
+                user_preferences=user_preferences
+            )
+            
+            ai_columns = extension_schema.get("columns", [])
+            for col in ai_columns:
+                col["source"] = "ai_suggested"
+                ai_suggested_columns.append(col["column_name"])
+            
+            new_columns.extend(ai_columns)
+        
+        # Add the new columns to the existing domain
+        combined_schema = existing_columns + new_columns
+        
+        # Store the extended domain
+        domain_data = {
+            "domain": domain_name,
+            "columns": combined_schema,
+            "extended": True,
+            "extension_info": {
+                "original_column_count": len(existing_columns),
+                "new_column_count": len(new_columns),
+                "total_column_count": len(combined_schema),
+                "extension_focus": focus_area,
+                "extension_style": style
+            }
+        }
+        
+        # Create extended domain in vector store
+        store = get_store()
+        for column in new_columns:
+            # Create column document
+            column_doc = ColumnDoc(
+                column_name=column["column_name"],
+                sample_values=column.get("sample_values", []),
+                metadata={
+                    "domain": domain_name,
+                    "type": column.get("type", "string"),
+                    "description": column.get("description", ""),
+                    "is_extension": True,
+                    "extension_focus": focus_area
+                }
+            )
+            
+            # Add to vector store
+            await store.add_column(column_doc)
+        
+        return JSONResponse({
+            "status": "success",
+            "message": f"Domain '{domain_name}' extended successfully",
+            "domain": domain_name,
+            "extension_summary": {
+                "original_columns": len(existing_columns),
+                "user_columns_added": len(user_columns_added),
+                "ai_suggested_columns": len(ai_suggested_columns),
+                "total_new_columns": len(new_columns),
+                "total_columns": len(combined_schema),
+                "duplicates_skipped": len(duplicates_skipped),
+                "focus_area": focus_area,
+                "style": style
+            },
+            "new_columns": new_columns,
+            "user_provided_columns": user_columns_added,
+            "ai_suggested_columns": ai_suggested_columns,
+            "duplicates_skipped": duplicates_skipped,
+            "complete_schema": combined_schema,
+            "actions": {
+                "suggest_more": f"/api/aips/suggest-extend-domain/{domain_name}",
+                "view_domain": f"/api/aips/domain/{domain_name}",
+                "regenerate_extensions": "/api/aips/extend-domain"
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error extending domain: {str(e)}")
+        return JSONResponse({
+            "error": str(e),
+            "message": f"Failed to extend domain '{domain_name}'"
+        }, status_code=500)
+
+
+@router.post("/api/aips/suggest-extend-domain/{domain_name}")
+async def suggest_extensions(domain_name: str, request: Request):
+    """
+    Suggest additional columns for an existing domain without modifying it.
+    
+    Provides AI-powered suggestions for columns that could enhance the domain
+    based on the existing schema and user-specified preferences or focus areas.
+    """
+    try:
+        body = await request.json()
+        
+        # Get existing domain schema
+        store = get_store()
+        if store is None:
+            return JSONResponse({
+                "error": "OpenSearch store not available"
+            }, status_code=503)
+        
+        # Query for existing domain
+        query = {
+            "query": {
+                "term": {"metadata.domain": domain_name}
+            },
+            "size": 100,
+            "_source": ["column_name", "metadata", "sample_values"]
+        }
+        
+        response = store.client.search(index=store.index_name, body=query)
+        
+        if response["hits"]["total"]["value"] == 0:
+            return JSONResponse({
+                "error": f"Domain '{domain_name}' not found",
+                "message": "Cannot suggest extensions for a domain that doesn't exist"
+            }, status_code=404)
+        
+        existing_columns = []
+        for hit in response["hits"]["hits"]:
+            source = hit["_source"]
+            existing_columns.append({
+                "column_name": source.get("column_name", "unknown"),
+                "type": source.get("metadata", {}).get("type", "string"),
+                "sample_values": source.get("sample_values", []),
+                "metadata": source.get("metadata", {})
+            })
+        
+        existing_domain = {
+            "found": True,
+            "columns": existing_columns
+        }
+        
+        if not existing_domain.get("found"):
+            return JSONResponse({
+                "error": f"Domain '{domain_name}' not found",
+                "message": "Cannot suggest extensions for a domain that doesn't exist"
+            }, status_code=404)
+        
+        existing_columns = existing_domain.get("columns", [])
+        existing_column_names = [col.get("column_name", "") for col in existing_columns]
+        
+        # Get suggestion preferences
+        suggestion_preferences = body.get("suggestion_preferences", {})
+        suggested_count = suggestion_preferences.get("column_count", 5)
+        focus_areas = suggestion_preferences.get("focus_areas", ["analytics", "compliance", "operations"])
+        style = suggestion_preferences.get("style", "comprehensive")
+        
+        # Use enhanced schema suggester
+        from app.agents.schema_suggester import SchemaSuggesterEnhanced
+        suggester = SchemaSuggesterEnhanced()
+        
+        suggestions_by_focus = {}
+        
+        # Generate suggestions for each focus area
+        for focus_area in focus_areas:
+            extension_description = f"""
+            Suggest columns to extend the domain '{domain_name}' with focus on {focus_area}.
+            
+            Existing columns: {', '.join(existing_column_names)}
+            
+            Generate {suggested_count} columns that would enhance the domain for {focus_area} purposes.
+            Avoid duplicating existing columns.
+            """
+            
+            user_preferences = {
+                "exclude_columns": existing_column_names,
+                "style": style,
+                "column_count": suggested_count,
+                "include_keywords": [focus_area],
+                "iteration": 1
+            }
+            
+            focus_suggestions = await suggester.bootstrap_schema_with_preferences(
+                business_description=extension_description,
+                user_preferences=user_preferences
+            )
+            
+            suggestions_by_focus[focus_area] = {
+                "columns": focus_suggestions.get("columns", []),
+                "total_columns": len(focus_suggestions.get("columns", [])),
+                "description": f"Columns focused on {focus_area} enhancement"
+            }
+        
+        return JSONResponse({
+            "status": "success",
+            "message": f"Extension suggestions generated for domain '{domain_name}'",
+            "domain_name": domain_name,
+            "existing_column_count": len(existing_columns),
+            "suggestion_summary": {
+                "total_focus_areas": len(focus_areas),
+                "columns_per_focus": suggested_count,
+                "style": style
+            },
+            "suggestions": suggestions_by_focus,
+            "existing_columns": [col.get("column_name") for col in existing_columns],
+            "actions": {
+                "extend_domain": "/api/aips/extend-domain",
+                "view_domain": f"/api/aips/domain/{domain_name}",
+                "resuggest_domain_schema": "/api/aips/resuggest-domain-schema"
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error suggesting extensions for domain: {str(e)}")
+        return JSONResponse({
+            "error": str(e),
+            "message": f"Failed to suggest extensions for domain '{domain_name}'"
         }, status_code=500)
 

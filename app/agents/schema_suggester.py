@@ -1,21 +1,52 @@
+"""
+Comprehensive Schema Suggester with both basic and enhanced functionality.
+
+Combines:
+1. Basic schema generation with Pydantic validation (original functionality)
+2. Enhanced AI-powered schema generation with user preferences
+3. Iterative refinement and style customization
+4. Smart column conflict resolution and duplicate detection
+
+Features:
+- Basic domain schema generation for backward compatibility
+- Enhanced schema generation with user preferences
+- Style-based generation (minimal, standard, comprehensive)
+- Iteration tracking and progressive refinement
+- User preference filtering (exclude columns, include keywords)
+- Fallback mechanisms and robust error handling
+"""
+
+import json
+import logging
+import time
 from typing import Dict, Any, List, Optional, Union
 from functools import lru_cache
 from dataclasses import dataclass
+
+# Pydantic and LangChain imports for structured output
 from langchain_core.output_parsers import JsonOutputParser, PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field, field_validator
+
+# Retry and error handling
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+# OpenAI async client for enhanced features
+from openai import AsyncOpenAI
+
+# App imports
 from app.vector_db.schema_loader import validate_column_schema
 from app.core.config import settings
 from app.core.aws_secrets_service import require_openai_api_key
 from app.core.exceptions import SchemaGenerationError
-import logging
-import json
-import time
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# CONFIGURATION AND DATA MODELS
+# =============================================================================
 
 @dataclass
 class SchemaGenerationConfig:
@@ -59,15 +90,22 @@ class SchemaResponse(BaseModel):
     columns: List[ColumnSchema] = Field(..., min_length=5, max_length=11)
 
 
+# =============================================================================
+# CACHING AND CONFIGURATION
+# =============================================================================
+
 # Cache for model chains to avoid recreation
 _model_chain_cache = {}
-
 
 @lru_cache(maxsize=1)
 def get_schema_generation_config() -> SchemaGenerationConfig:
     """Get schema generation configuration with caching"""
     return SchemaGenerationConfig()
 
+
+# =============================================================================
+# BASIC SCHEMA GENERATION (ORIGINAL FUNCTIONALITY)
+# =============================================================================
 
 def get_model_chain(use_structured_output: bool = True) -> Runnable:
     """Get or create model chain with caching and error handling"""
@@ -136,6 +174,7 @@ Requirements:
             raise SchemaGenerationError(f"Model initialization failed: {e}")
     
     return _model_chain_cache[cache_key]
+
 
 @retry(
     stop=stop_after_attempt(3),
@@ -304,52 +343,6 @@ def format_llm_schema(raw: Dict[str, Any], strict_validation: bool = True) -> Di
     return formatted
 
 
-def _validate_samples_for_type(samples: List[str], col_type: str) -> bool:
-    """
-    Validate that sample values are reasonable for the given data type.
-    """
-    if not samples or len(samples) < 3:
-        return False
-    
-    try:
-        if col_type in ["integer", "int"]:
-            return all(str(sample).strip().lstrip('-').isdigit() for sample in samples)
-        elif col_type in ["float", "decimal", "number"]:
-            return all(_is_valid_float(str(sample)) for sample in samples)
-        elif col_type in ["boolean", "bool"]:
-            return all(str(sample).lower() in ["true", "false", "0", "1", "yes", "no"] for sample in samples)
-        elif col_type == "date":
-            return all(len(str(sample)) >= 8 for sample in samples)  # Basic date length check
-        else:  # string, text, etc.
-            return all(isinstance(sample, (str, int, float)) for sample in samples)
-    except Exception:
-        return False
-
-
-def _is_valid_float(value: str) -> bool:
-    """Check if string can be converted to float"""
-    try:
-        float(value)
-        return True
-    except (ValueError, TypeError):
-        return False
-
-
-def _normalize_data_type(col_type: str) -> str:
-    """
-    Normalize data type names to standard format.
-    """
-    type_mapping = {
-        "int": "integer",
-        "bool": "boolean",
-        "str": "string",
-        "text": "string",
-        "number": "float",
-        "decimal": "float"
-    }
-    return type_mapping.get(col_type.lower(), col_type.lower())
-
-
 def bootstrap_schema_for_domain(
     domain: str, 
     use_structured_output: bool = True,
@@ -410,6 +403,499 @@ def bootstrap_schema_for_domain(
         raise SchemaGenerationError(f"Failed to bootstrap schema for domain '{domain}': {e}")
 
 
+# =============================================================================
+# ENHANCED SCHEMA GENERATION WITH USER PREFERENCES
+# =============================================================================
+
+class SchemaSuggesterEnhanced:
+    """Enhanced schema suggester with user preferences and iterative improvements."""
+    
+    def __init__(self):
+        try:
+            # Get API key from AWS Secrets Manager for enhanced features
+            openai_key = require_openai_api_key()
+            self.client = AsyncOpenAI(api_key=openai_key)
+        except Exception:
+            # Fall back to settings if AWS Secrets Manager fails
+            self.client = AsyncOpenAI(api_key=settings.openai_api_key)
+        self.model = "gpt-4o-mini"
+    
+    async def bootstrap_schema_with_preferences(
+        self, 
+        business_description: str,
+        user_preferences: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate schema with enhanced user preferences and style options.
+        
+        Args:
+            business_description: Description of the business domain
+            user_preferences: Dictionary containing user customization options
+                - style: "minimal", "standard", "comprehensive"
+                - exclude_columns: List of column names to avoid
+                - include_keywords: List of keywords to prioritize
+                - column_count: Preferred number of columns
+                - iteration: Iteration number for progressive refinement
+        
+        Returns:
+            Enhanced schema with metadata about preferences applied
+        """
+        if user_preferences is None:
+            user_preferences = {}
+        
+        # Extract preferences with defaults
+        style = user_preferences.get("style", "standard")
+        exclude_columns = user_preferences.get("exclude_columns", [])
+        include_keywords = user_preferences.get("include_keywords", [])
+        column_count = user_preferences.get("column_count", self._get_default_column_count(style))
+        iteration = user_preferences.get("iteration", 1)
+        
+        # Build enhanced prompt based on preferences
+        enhanced_prompt = self._build_enhanced_prompt(
+            business_description=business_description,
+            style=style,
+            exclude_columns=exclude_columns,
+            include_keywords=include_keywords,
+            column_count=column_count,
+            iteration=iteration
+        )
+        
+        # Generate schema with dynamic temperature based on iteration
+        temperature = self._calculate_temperature(iteration, style)
+        
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an expert business analyst and database designer. Generate JSON schema suggestions that are practical, well-structured, and aligned with business needs."
+                    },
+                    {
+                        "role": "user",
+                        "content": enhanced_prompt
+                    }
+                ],
+                temperature=temperature,
+                max_tokens=2000
+            )
+            
+            # Parse and enhance the response
+            raw_schema = self._parse_openai_response(response.choices[0].message.content)
+            
+            # Apply user preferences and enhancements
+            enhanced_schema = self._apply_user_preferences(
+                raw_schema=raw_schema,
+                user_preferences=user_preferences,
+                business_description=business_description
+            )
+            
+            return enhanced_schema
+            
+        except Exception as e:
+            logger.error(f"Error generating enhanced schema: {str(e)}")
+            # Fallback to basic schema generation
+            return await self._fallback_schema_generation(business_description, user_preferences)
+    
+    def _build_enhanced_prompt(
+        self,
+        business_description: str,
+        style: str,
+        exclude_columns: List[str],
+        include_keywords: List[str],
+        column_count: int,
+        iteration: int
+    ) -> str:
+        """Build an enhanced prompt based on user preferences."""
+        
+        style_instructions = {
+            "minimal": f"Generate exactly {column_count} essential columns focusing on core business data only. Prioritize simplicity and efficiency.",
+            "standard": f"Generate {column_count} well-balanced columns covering essential business needs with reasonable detail.",
+            "comprehensive": f"Generate {column_count} detailed columns providing extensive business insights and analytics capabilities."
+        }
+        
+        prompt_parts = [
+            f"Business Domain: {business_description}",
+            "",
+            f"Style: {style_instructions.get(style, style_instructions['standard'])}",
+            ""
+        ]
+        
+        if exclude_columns:
+            prompt_parts.extend([
+                f"EXCLUDE these column names or similar concepts: {', '.join(exclude_columns)}",
+                ""
+            ])
+        
+        if include_keywords:
+            prompt_parts.extend([
+                f"PRIORITIZE these concepts/keywords: {', '.join(include_keywords)}",
+                ""
+            ])
+        
+        if iteration > 1:
+            prompt_parts.extend([
+                f"This is iteration #{iteration}. Previous suggestions were not satisfactory.",
+                "Focus on creative alternatives and fresh perspectives.",
+                ""
+            ])
+        
+        prompt_parts.extend([
+            "Return a JSON object with this exact structure:",
+            "{",
+            '  "columns": [',
+            '    {',
+            '      "column_name": "string",',
+            '      "type": "string|integer|float|boolean|date|datetime|text",',
+            '      "description": "detailed business purpose",',
+            '      "sample_values": ["value1", "value2", "value3"],',
+            '      "business_relevance": "why this matters for the business"',
+            '    }',
+            '  ]',
+            '}',
+            "",
+            "Ensure column names are business-friendly, descriptive, and follow snake_case convention."
+        ])
+        
+        return "\n".join(prompt_parts)
+    
+    def _get_default_column_count(self, style: str) -> int:
+        """Get default column count based on style."""
+        defaults = {
+            "minimal": 5,
+            "standard": 8,
+            "comprehensive": 12
+        }
+        return defaults.get(style, 8)
+    
+    def _calculate_temperature(self, iteration: int, style: str) -> float:
+        """Calculate OpenAI temperature based on iteration and style."""
+        base_temperatures = {
+            "minimal": 0.3,
+            "standard": 0.5,
+            "comprehensive": 0.7
+        }
+        
+        base_temp = base_temperatures.get(style, 0.5)
+        
+        # Increase creativity for higher iterations
+        iteration_boost = min((iteration - 1) * 0.1, 0.3)
+        
+        return min(base_temp + iteration_boost, 0.9)
+    
+    def _parse_openai_response(self, content: str) -> Dict[str, Any]:
+        """Parse OpenAI response, handling various JSON formats."""
+        try:
+            # Clean the content
+            content = content.strip()
+            
+            # Remove markdown code blocks if present
+            if content.startswith("```json"):
+                content = content[7:]
+            if content.startswith("```"):
+                content = content[3:]
+            if content.endswith("```"):
+                content = content[:-3]
+            
+            content = content.strip()
+            
+            # Parse JSON
+            return json.loads(content)
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parsing error: {str(e)}")
+            logger.error(f"Content: {content}")
+            
+            # Try to extract JSON from text
+            return self._extract_json_from_text(content)
+    
+    def _extract_json_from_text(self, text: str) -> Dict[str, Any]:
+        """Extract JSON structure from mixed text content."""
+        try:
+            # Find JSON-like structure
+            start_idx = text.find('{')
+            end_idx = text.rfind('}') + 1
+            
+            if start_idx != -1 and end_idx > start_idx:
+                json_str = text[start_idx:end_idx]
+                return json.loads(json_str)
+            
+            # Fallback: return empty structure
+            return {"columns": []}
+            
+        except Exception as e:
+            logger.error(f"JSON extraction error: {str(e)}")
+            return {"columns": []}
+    
+    def _apply_user_preferences(
+        self,
+        raw_schema: Dict[str, Any],
+        user_preferences: Dict[str, Any],
+        business_description: str
+    ) -> Dict[str, Any]:
+        """Apply user preferences and add enhancement metadata."""
+        
+        columns = raw_schema.get("columns", [])
+        exclude_columns = user_preferences.get("exclude_columns", [])
+        include_keywords = user_preferences.get("include_keywords", [])
+        style = user_preferences.get("style", "standard")
+        iteration = user_preferences.get("iteration", 1)
+        
+        # Filter out excluded columns
+        filtered_columns = []
+        for column in columns:
+            column_name = column.get("column_name", "").lower()
+            
+            # Check if column should be excluded
+            should_exclude = any(
+                excluded.lower() in column_name or column_name in excluded.lower()
+                for excluded in exclude_columns
+            )
+            
+            if not should_exclude:
+                filtered_columns.append(column)
+        
+        # Score and sort columns based on keyword preferences
+        if include_keywords:
+            for column in filtered_columns:
+                column["preference_score"] = self._calculate_preference_score(
+                    column, include_keywords
+                )
+            
+            # Sort by preference score (highest first)
+            filtered_columns.sort(
+                key=lambda x: x.get("preference_score", 0), 
+                reverse=True
+            )
+        
+        # Apply column count limit
+        target_count = user_preferences.get("column_count")
+        if target_count and len(filtered_columns) > target_count:
+            filtered_columns = filtered_columns[:target_count]
+        
+        # Generate enhancement tips
+        next_iteration_tips = self._generate_iteration_tips(
+            columns=filtered_columns,
+            user_preferences=user_preferences,
+            business_description=business_description
+        )
+        
+        style_recommendations = self._generate_style_recommendations(
+            current_style=style,
+            column_count=len(filtered_columns)
+        )
+        
+        # Build enhanced response
+        enhanced_schema = {
+            "columns": filtered_columns,
+            "total_columns": len(filtered_columns),
+            "style": style,
+            "iteration": iteration,
+            "preferences_applied": {
+                "excluded_columns": len(columns) - len(filtered_columns),
+                "keyword_filtering": bool(include_keywords),
+                "style_customization": style != "standard",
+                "iteration_enhancement": iteration > 1
+            },
+            "next_iteration_tips": next_iteration_tips,
+            "style_recommendations": style_recommendations,
+            "metadata": {
+                "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "temperature_used": self._calculate_temperature(iteration, style),
+                "business_description_hash": hash(business_description) % 100000
+            }
+        }
+        
+        return enhanced_schema
+    
+    def _calculate_preference_score(self, column: Dict[str, Any], keywords: List[str]) -> float:
+        """Calculate preference score based on keyword matching."""
+        score = 0.0
+        
+        column_text = " ".join([
+            column.get("column_name", ""),
+            column.get("description", ""),
+            column.get("business_relevance", ""),
+            " ".join(str(v) for v in column.get("sample_values", []))
+        ]).lower()
+        
+        for keyword in keywords:
+            keyword = keyword.lower()
+            if keyword in column_text:
+                # Higher score for exact matches in column name
+                if keyword in column.get("column_name", "").lower():
+                    score += 3.0
+                # Medium score for description/relevance matches
+                elif keyword in column.get("description", "").lower():
+                    score += 2.0
+                # Lower score for sample value matches
+                else:
+                    score += 1.0
+        
+        return score
+    
+    def _generate_iteration_tips(
+        self,
+        columns: List[Dict[str, Any]],
+        user_preferences: Dict[str, Any],
+        business_description: str
+    ) -> List[str]:
+        """Generate tips for the next iteration."""
+        tips = []
+        
+        current_style = user_preferences.get("style", "standard")
+        exclude_columns = user_preferences.get("exclude_columns", [])
+        
+        # Style-specific tips
+        if current_style == "minimal":
+            tips.append("Try 'standard' style for more detailed business insights")
+        elif current_style == "comprehensive":
+            tips.append("Try 'minimal' style for essential columns only")
+        else:
+            tips.append("Try 'comprehensive' style for advanced analytics columns")
+        
+        # Column exclusion tips
+        if len(exclude_columns) > 3:
+            tips.append("Consider reducing exclusions to get more diverse suggestions")
+        elif not exclude_columns:
+            tips.append("Add specific column exclusions to avoid unwanted suggestions")
+        
+        # Business focus tips
+        if "analytics" not in business_description.lower():
+            tips.append("Include 'analytics' keywords for better reporting columns")
+        
+        if "compliance" not in business_description.lower():
+            tips.append("Add 'compliance' focus for regulatory tracking columns")
+        
+        return tips[:3]  # Limit to 3 tips
+    
+    def _generate_style_recommendations(self, current_style: str, column_count: int) -> List[str]:
+        """Generate style recommendations based on current selection."""
+        recommendations = []
+        
+        if current_style == "minimal" and column_count < 7:
+            recommendations.append("Current minimal style works well for focused domains")
+        elif current_style == "comprehensive" and column_count > 10:
+            recommendations.append("Comprehensive style provides extensive business coverage")
+        else:
+            recommendations.append("Standard style offers balanced business insights")
+        
+        # Add suggestions for other styles
+        if current_style != "minimal":
+            recommendations.append("Try minimal style for core business essentials")
+        
+        if current_style != "comprehensive":
+            recommendations.append("Try comprehensive style for advanced analytics")
+        
+        return recommendations
+    
+    async def _fallback_schema_generation(
+        self,
+        business_description: str,
+        user_preferences: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Fallback to basic schema generation if enhanced generation fails."""
+        try:
+            # Use the existing basic schema generator
+            basic_schema = bootstrap_schema_for_domain(business_description)
+            
+            # Convert to enhanced format
+            columns = []
+            for col_name, col_info in basic_schema.items():
+                columns.append({
+                    "column_name": col_name,
+                    "type": col_info.get("dtype", "string"),
+                    "description": f"Basic schema column: {col_name}",
+                    "sample_values": col_info.get("sample_values", []),
+                    "business_relevance": f"Standard business field for {business_description}"
+                })
+            
+            # Add basic enhancement metadata
+            return {
+                "columns": columns,
+                "total_columns": len(columns),
+                "style": user_preferences.get("style", "standard"),
+                "iteration": user_preferences.get("iteration", 1),
+                "preferences_applied": {
+                    "fallback_used": True,
+                    "enhanced_generation": False
+                },
+                "next_iteration_tips": ["Try again with simpler preferences"],
+                "style_recommendations": ["Standard style recommended for fallback"],
+                "metadata": {
+                    "fallback_mode": True,
+                    "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Fallback schema generation failed: {str(e)}")
+            return {
+                "columns": [],
+                "total_columns": 0,
+                "style": "standard",
+                "iteration": 1,
+                "preferences_applied": {"error": True},
+                "next_iteration_tips": ["Please try again with a simpler business description"],
+                "style_recommendations": [],
+                "metadata": {"error": True}
+            }
+
+
+# =============================================================================
+# UTILITY FUNCTIONS
+# =============================================================================
+
+def _validate_samples_for_type(samples: List[str], col_type: str) -> bool:
+    """
+    Validate that sample values are reasonable for the given data type.
+    """
+    if not samples or len(samples) < 3:
+        return False
+    
+    try:
+        if col_type in ["integer", "int"]:
+            return all(str(sample).strip().lstrip('-').isdigit() for sample in samples)
+        elif col_type in ["float", "decimal", "number"]:
+            return all(_is_valid_float(str(sample)) for sample in samples)
+        elif col_type in ["boolean", "bool"]:
+            return all(str(sample).lower() in ["true", "false", "0", "1", "yes", "no"] for sample in samples)
+        elif col_type == "date":
+            return all(len(str(sample)) >= 8 for sample in samples)  # Basic date length check
+        else:  # string, text, etc.
+            return all(isinstance(sample, (str, int, float)) for sample in samples)
+    except Exception:
+        return False
+
+
+def _is_valid_float(value: str) -> bool:
+    """Check if string can be converted to float"""
+    try:
+        float(value)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def _normalize_data_type(col_type: str) -> str:
+    """
+    Normalize data type names to standard format.
+    """
+    type_mapping = {
+        "int": "integer",
+        "bool": "boolean",
+        "str": "string",
+        "text": "string",
+        "number": "float",
+        "decimal": "float"
+    }
+    return type_mapping.get(col_type.lower(), col_type.lower())
+
+
+# =============================================================================
+# PUBLIC API FUNCTIONS
+# =============================================================================
+
 def bootstrap_schema(domain: str) -> Dict[str, Any]:
     """
     Alias for bootstrap_schema_for_domain - for backward compatibility with tests.
@@ -467,3 +953,49 @@ def clear_model_cache() -> None:
     _model_chain_cache.clear()
     get_schema_generation_config.cache_clear()
     logger.info(" Model cache cleared")
+
+
+# =============================================================================
+# CONVENIENCE FUNCTIONS
+# =============================================================================
+
+async def generate_enhanced_schema(
+    business_description: str,
+    style: str = "standard",
+    column_count: Optional[int] = None,
+    exclude_columns: Optional[List[str]] = None,
+    include_keywords: Optional[List[str]] = None,
+    iteration: int = 1
+) -> Dict[str, Any]:
+    """
+    Convenience function for generating enhanced schemas with common parameters.
+    
+    Args:
+        business_description: Description of the business domain
+        style: "minimal", "standard", or "comprehensive"
+        column_count: Number of columns to generate (optional)
+        exclude_columns: Column names to avoid (optional)
+        include_keywords: Keywords to prioritize (optional) 
+        iteration: Iteration number for refinement
+        
+    Returns:
+        Enhanced schema with metadata
+    """
+    suggester = SchemaSuggesterEnhanced()
+    
+    user_preferences = {
+        "style": style,
+        "iteration": iteration
+    }
+    
+    if column_count is not None:
+        user_preferences["column_count"] = column_count
+    if exclude_columns:
+        user_preferences["exclude_columns"] = exclude_columns
+    if include_keywords:
+        user_preferences["include_keywords"] = include_keywords
+    
+    return await suggester.bootstrap_schema_with_preferences(
+        business_description=business_description,
+        user_preferences=user_preferences
+    )

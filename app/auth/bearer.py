@@ -296,12 +296,13 @@ class JWTTokenValidator:
                 # Space-separated format (default)
                 user_scopes = [scope.strip() for scope in token_scope.split() if scope.strip()]
             
-            # Only allow if user has manage:policy scope
-            if 'manage:policy' in user_scopes:
-                logger.debug(f" User has manage:policy scope - access granted. All scopes: {user_scopes}")
-                return True
+            # Check if user has any of the required scopes
+            for required_scope in required_scopes:
+                if required_scope in user_scopes:
+                    logger.debug(f" User has required scope '{required_scope}' - access granted. All scopes: {user_scopes}")
+                    return True
             
-            logger.warning(f" User lacks manage:policy scope. Has: {user_scopes}")
+            logger.warning(f" User lacks required scopes: {required_scopes}. Has: {user_scopes}")
             return False
             
         except Exception as e:
@@ -400,7 +401,7 @@ async def verify_jwt_token(
         if required_scopes and not token_validator.check_scope_permissions(token_payload, required_scopes):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Insufficient permissions. Required: manage:policy scope",
+                detail=f"Insufficient permissions. Required: {', '.join(required_scopes)} scope(s)",
                 headers={"WWW-Authenticate": "Bearer"}
             )
         
