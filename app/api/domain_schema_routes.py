@@ -25,7 +25,7 @@ def get_store() -> OpenSearchColumnStore:
             return None
     return _store
 
-@router.post("/api/aips/create/domain")
+@router.post("/api/aips/domain/create")
 async def create_domain(
     request: Request,
     payload: dict = Body(...),
@@ -651,54 +651,74 @@ async def download_csv_file(filename: str):
             "message": "Failed to download CSV file"
         }, status_code=500)
     
+
 @router.post("/api/aips/domain/suggest-schema")
 async def regenerate_suggestions(request: Request):
     """
-    Improve AI-powered domain schema suggestions with enhanced user preferences.
-    
-    Supports iterative improvement with user feedback and custom preferences:
-    - Style options: minimal, standard, comprehensive
-    - Column exclusions and keyword inclusions
-    - Iteration tracking for progressive refinement
-    - Smart filtering based on user satisfaction
+    AI-powered domain schema suggestions. User only needs to provide 'domain'.
+    LLM will generate business description and preferences automatically.
     """
     try:
         body = await request.json()
-        
-        # Validate required fields
-        if not body.get("business_description"):
+        domain = body.get("domain")
+        if not domain:
             return JSONResponse({
-                "error": "business_description is required"
+                "error": "Missing required field: 'domain'"
             }, status_code=400)
-        
-        # Extract user preferences
-        user_preferences = body.get("user_preferences", {})
-        
-        # Use enhanced schema suggester
+
+        # Use LLM to generate business description and preferences
+        # For now, use a generic prompt based on domain name
+        business_description = f"Generate a schema for the business domain '{domain}'. Suggest columns relevant to this domain."
+        user_preferences = {
+            "style": "standard",
+            "column_count": 8,
+            "iteration": 1
+        }
+
         from app.agents.schema_suggester import SchemaSuggesterEnhanced
-        
         suggester = SchemaSuggesterEnhanced()
-        
-        # Generate enhanced schema with preferences
         enhanced_schema = await suggester.bootstrap_schema_with_preferences(
-            business_description=body["business_description"],
+            business_description=business_description,
             user_preferences=user_preferences
         )
-        
+
+        # Extract column names from enhanced_schema
+        suggested_columns = [col.get("column_name") for col in enhanced_schema.get("columns", [])]
+
         return JSONResponse({
-            "status": "success",
-            "message": "Enhanced schema suggestions generated successfully",
-            "iteration": enhanced_schema.get("iteration", 1),
-            "style": enhanced_schema.get("style", "standard"),
-            "total_columns": enhanced_schema.get("total_columns", 0),
-            "schema": enhanced_schema.get("columns", []),
-            "preferences_applied": enhanced_schema.get("preferences_applied", {}),
-            "suggestions": {
-                "next_iteration_tips": enhanced_schema.get("next_iteration_tips", []),
-                "style_recommendations": enhanced_schema.get("style_recommendations", [])
+            "domain": domain,
+            "suggested_columns": suggested_columns,
+            "actions": {
+                "note": "Column names only suggested. Data types will be inferred from actual CSV data.",
+                "create_schema_with_csv": {
+                    "description": "Use suggested column names to create schema from CSV",
+                    "endpoint": "/api/aips/domain/create",
+                    "method": "POST",
+                    "payload": {
+                        "domain": domain,
+                        "columns": suggested_columns,
+                        "return_csv": True
+                    }
+                },
+                "create_schema_only": {
+                    "description": "Use suggested column names to create schema",
+                    "endpoint": "/api/aips/domain/create",
+                    "method": "POST",
+                    "payload": {
+                        "domain": domain,
+                        "columns": suggested_columns,
+                        "return_csv": False
+                    }
+                }
+            },
+            "next_steps": {
+                "after_confirm": [
+                    "Schema will be saved to vector database",
+                    "Optional: Download sample CSV data",
+                    "Call /api/aips/domain/create"
+                ]
             }
         })
-        
     except Exception as e:
         logger.error(f"Error in regenerate suggestions: {str(e)}")
         return JSONResponse({
