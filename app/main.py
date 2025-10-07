@@ -1,7 +1,8 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
-from app.api.routes import router
+from app.api.domain_schema_routes import router as domain_schema_router
+from app.api.rule_suggestion_routes import router as rule_suggestion_router
 from app.core.exceptions import (
     authentication_exception_handler,
     general_exception_handler,
@@ -101,7 +102,8 @@ def service_info():
         "branch": "feature/opensearch-column-store"
     }
 
-app.include_router(router)
+app.include_router(domain_schema_router)
+app.include_router(rule_suggestion_router)
 
 
 if __name__ == "__main__":
