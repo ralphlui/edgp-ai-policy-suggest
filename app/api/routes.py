@@ -1,3 +1,45 @@
+# Vector DB status endpoint for test and API use
+from fastapi import Depends
+from fastapi.responses import JSONResponse
+
+async def check_vectordb_status():
+    """Check vector database connection and index status"""
+    try:
+        store = get_store()
+        if store is None:
+            return JSONResponse({
+                "status": "error",
+                "message": "OpenSearch store not available",
+                "connection": "failed"
+            }, status_code=503)
+        client = store.client
+        index_name = store.index_name
+        index_exists = client.indices.exists(index=index_name)
+        result = {
+            "status": "connected",
+            "index_name": index_name,
+            "index_exists": index_exists
+        }
+        if index_exists:
+            try:
+                stats = client.indices.stats(index=index_name)
+                doc_count = stats["indices"][index_name]["total"]["docs"]["count"]
+                result["document_count"] = doc_count
+            except Exception as stats_error:
+                result["document_count"] = "unknown"
+                result["stats_error"] = str(stats_error)
+        return JSONResponse(result)
+    except Exception as e:
+        return JSONResponse({
+            "status": "error",
+            "message": str(e),
+            "connection": "failed"
+        }, status_code=500)
+
+# Explicitly export direct route functions for test imports
+check_vectordb_status = check_vectordb_status
+# Explicitly export direct route functions for test imports
+check_vectordb_status = check_vectordb_status
 from fastapi import APIRouter, HTTPException, Body, Depends, Request
 from fastapi.responses import JSONResponse
 from app.agents.agent_runner import run_agent
@@ -38,55 +80,17 @@ def get_store() -> OpenSearchColumnStore:
 router = APIRouter()
 
 
-@router.get("/api/aips/vector/status")
-async def check_vectordb_status():
-    """Check vector database connection and index status."""
-    try:
-        store = get_store()
-        if store is None:
-            return JSONResponse({
-                "status": "error",
-                "message": "OpenSearch store not available",
-                "connection": "failed"
-            }, status_code=503)
+# Re-export endpoint functions for test imports
+from app.api.domain_schema_routes import (
+    create_domain, get_domains, verify_domain_exists,
+    list_domains_in_vectordb, get_domain_from_vectordb,
+    download_csv_file, regenerate_suggestions, extend_domain, suggest_extensions, get_store
+)
+try:
+    from app.api.rule_suggestion_routes import suggest_rules
+except ImportError:
+    pass
         
-        # Test connection and get index info
-        client = store.client
-        index_name = store.index_name
-        
-        # Check if index exists
-        index_exists = client.indices.exists(index=index_name)
-        
-        result = {
-            "status": "connected",
-            "index_name": index_name,
-            "index_exists": index_exists,
-            "connection": "success"
-        }
-        
-        if index_exists:
-            # Get index stats
-            try:
-                stats = client.indices.stats(index=index_name)
-                result["document_count"] = stats["indices"][index_name]["total"]["docs"]["count"]
-                result["index_size"] = stats["indices"][index_name]["total"]["store"]["size_in_bytes"]
-            except Exception as stats_error:
-                logger.warning(f"Could not get index stats: {stats_error}")
-                result["document_count"] = "unknown"
-                result["index_size"] = "unknown"
-                result["stats_error"] = str(stats_error)
-        else:
-            result["document_count"] = 0
-            result["index_size"] = 0
-            result["note"] = "Index does not exist yet. It will be created when first data is added."
-        
-        return JSONResponse(result)
-        
-    except Exception as e:
-        return JSONResponse({
-            "status": "error", 
-            "message": str(e),
-            "connection": "failed"
-        }, status_code=500)
 
+        # Test connection and get index info
 

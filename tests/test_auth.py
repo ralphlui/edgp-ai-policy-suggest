@@ -44,7 +44,7 @@ try:
     from fastapi.testclient import TestClient
     
     # Import auth components
-    from app.auth.bearer import (
+    from app.auth.authentication import (
         JWTTokenValidator,
         UserInfo,
         verify_jwt_token,
@@ -52,7 +52,6 @@ try:
         verify_mdm_token,
         verify_any_scope_token,
         optional_jwt_token,
-        token_validator,
         create_error_response,
         create_auth_error_response,
         StandardResponse,
@@ -82,7 +81,7 @@ def test_client():
 @pytest.fixture(scope="module")
 def mock_settings():
     """Module-level mock settings for consistent test environment"""
-    with patch('app.auth.bearer.settings') as mock:
+    with patch('app.auth.authentication.settings') as mock:
         mock.jwt_algorithm = "RS256"
         mock.admin_api_url = "http://test-auth-service.com"
         mock.jwt_public_key = "-----BEGIN PUBLIC KEY-----\ntest_key\n-----END PUBLIC KEY-----"
@@ -182,7 +181,7 @@ class TestJWTTokenValidator:
             validator._load_public_key()
             assert validator.public_key is not None
     
-    @patch('app.auth.bearer.jwt.decode')
+    @patch('app.auth.authentication.jwt.decode')
     def test_decode_token_success(self, mock_jwt_decode, base_validator, sample_token_payload):
         """Test successful token decoding"""
         mock_jwt_decode.return_value = sample_token_payload
@@ -192,7 +191,7 @@ class TestJWTTokenValidator:
         assert result == sample_token_payload
         mock_jwt_decode.assert_called_once()
     
-    @patch('app.auth.bearer.jwt.decode')
+    @patch('app.auth.authentication.jwt.decode')
     def test_decode_token_expired(self, mock_jwt_decode, base_validator):
         """Test token decoding with expired token"""
         mock_jwt_decode.side_effect = jwt.ExpiredSignatureError("Token expired")
@@ -203,7 +202,7 @@ class TestJWTTokenValidator:
         assert exc_info.value.status_code == 401
         assert "JWT token is expired" in exc_info.value.detail
 
-    @patch('app.auth.bearer.jwt.decode')
+    @patch('app.auth.authentication.jwt.decode')
     def test_decode_token_invalid_signature(self, mock_jwt_decode, base_validator):
         """Test handling of invalid signature error"""
         mock_jwt_decode.side_effect = jwt.InvalidSignatureError("Invalid signature")
@@ -214,7 +213,7 @@ class TestJWTTokenValidator:
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
         assert "Invalid token signature" in str(exc_info.value.detail)
 
-    @patch('app.auth.bearer.jwt.decode')
+    @patch('app.auth.authentication.jwt.decode')
     def test_decode_token_missing_claim(self, mock_jwt_decode, base_validator):
         """Test handling of missing required claim error"""
         mock_jwt_decode.side_effect = jwt.MissingRequiredClaimError("Missing 'exp' claim")
@@ -376,7 +375,7 @@ class TestVerificationFunctions:
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="   ")
         
         # Should pass the empty check but fail in JWT decoding
-        with patch('app.auth.bearer.token_validator.decode_token') as mock_decode:
+        with patch('app.auth.authentication.token_validator.decode_token') as mock_decode:
             mock_decode.side_effect = HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid JWT token"
@@ -390,8 +389,8 @@ class TestVerificationFunctions:
     @pytest.mark.asyncio
     async def test_verify_jwt_token_with_custom_scopes(self, valid_credentials):
         """Test JWT token verification with custom required scopes"""
-        with patch('app.auth.bearer.token_validator.decode_token') as mock_decode, \
-             patch('app.auth.bearer.token_validator.validate_user_with_auth_service') as mock_validate:
+        with patch('app.auth.authentication.token_validator.decode_token') as mock_decode, \
+             patch('app.auth.authentication.token_validator.validate_user_with_auth_service') as mock_validate:
             
             mock_decode.return_value = {
                 "userEmail": "test@example.com",
@@ -413,7 +412,7 @@ class TestVerificationFunctions:
     @pytest.mark.asyncio
     async def test_verify_policy_token(self, valid_credentials):
         """Test verify_policy_token function"""
-        with patch('app.auth.bearer.verify_jwt_token', new_callable=AsyncMock) as mock_verify:
+        with patch('app.auth.authentication.verify_jwt_token', new_callable=AsyncMock) as mock_verify:
             mock_user_info = Mock()
             mock_verify.return_value = mock_user_info
             
@@ -440,7 +439,7 @@ class TestVerificationFunctions:
         """Test optional JWT token with invalid token (should return None, not raise)"""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="invalid-token")
         
-        with patch('app.auth.bearer.verify_jwt_token') as mock_verify:
+        with patch('app.auth.authentication.verify_jwt_token') as mock_verify:
             mock_verify.side_effect = HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token"
@@ -575,7 +574,7 @@ class TestEnhancedValidatorEdgeCases:
     @pytest.fixture
     def validator_no_key(self):
         """Validator with no public key configured"""
-        with patch('app.auth.bearer.settings') as mock_settings, \
+        with patch('app.auth.authentication.settings') as mock_settings, \
              patch('app.core.aws_secrets_service.get_jwt_public_key') as mock_get_jwt:
             mock_settings.jwt_public_key = None
             mock_settings.jwt_algorithm = "RS256"
@@ -586,7 +585,7 @@ class TestEnhancedValidatorEdgeCases:
     @pytest.fixture
     def validator_base64_key(self):
         """Validator with base64 encoded public key"""
-        with patch('app.auth.bearer.settings') as mock_settings, \
+        with patch('app.auth.authentication.settings') as mock_settings, \
              patch('app.core.aws_secrets_service.get_jwt_public_key') as mock_get_jwt:
             # Simulate base64 encoded key (without PEM headers)
             mock_settings.jwt_public_key = "LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUF0dz"
@@ -625,8 +624,8 @@ class TestConcurrencyAndPerformance:
     @pytest.mark.asyncio
     async def test_concurrent_token_validation(self, valid_credentials):
         """Test concurrent token validation to ensure thread safety"""
-        with patch('app.auth.bearer.token_validator.decode_token') as mock_decode, \
-             patch('app.auth.bearer.token_validator.validate_user_with_auth_service') as mock_validate:
+        with patch('app.auth.authentication.token_validator.decode_token') as mock_decode, \
+             patch('app.auth.authentication.token_validator.validate_user_with_auth_service') as mock_validate:
             
             mock_decode.return_value = {
                 "userEmail": "test@example.com",
@@ -723,8 +722,8 @@ class TestGetUserInfoFunction:
     @pytest.mark.asyncio
     async def test_get_user_info_success(self):
         """Test successful user info retrieval"""
-        with patch('app.auth.bearer.token_validator.decode_token') as mock_decode, \
-             patch('app.auth.bearer.token_validator.validate_user_with_auth_service') as mock_validate:
+        with patch('app.auth.authentication.token_validator.decode_token') as mock_decode, \
+             patch('app.auth.authentication.token_validator.validate_user_with_auth_service') as mock_validate:
             
             mock_decode.return_value = {
                 "userEmail": "test@example.com",
@@ -743,7 +742,7 @@ class TestGetUserInfoFunction:
     @pytest.mark.asyncio
     async def test_convenience_auth_functions(self, valid_credentials):
         """Test convenience authentication functions"""
-        with patch('app.auth.bearer.verify_jwt_token') as mock_verify:
+        with patch('app.auth.authentication.verify_jwt_token') as mock_verify:
             mock_user = UserInfo(
                 email="test@example.com",
                 user_id="user123",

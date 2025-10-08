@@ -75,9 +75,9 @@ async def create_domain(
                         "note": note,
                         "case_conflict": existing_domain != normalized_domain,
                         "actions": {
-                            "extend_domain": {
+                            "extend-schema": {
                                 "description": "Add new columns to existing domain",
-                                "endpoint": "/api/aips/extend-domain",
+                                "endpoint": "/api/aips/domain/extend-schema",
                                 "method": "POST",
                                 "payload": {
                                     "domain": existing_domain,
@@ -87,7 +87,7 @@ async def create_domain(
                             },
                             "suggest_extensions": {
                                 "description": "Get AI suggestions for additional columns",
-                                "endpoint": "/api/aips/suggest-extend-domain",
+                                "endpoint": "/api/aips/domain/suggest-extend-schema",
                                 "method": "POST",
                                 "payload": {
                                     "domain": existing_domain,
@@ -263,11 +263,11 @@ async def create_domain(
             # Create empty DataFrame with just column headers (no sample data)
             df = pd.DataFrame(columns=column_names)
             
-            # 🤖 AGENTIC ENHANCEMENT: Generate rule suggestions for CSV response
+            # AGENTIC ENHANCEMENT: Generate rule suggestions for CSV response
             rule_suggestions = []
             
             if storage_success:
-                logger.info(f"🤖 Generating rule suggestions for CSV download of domain: {normalized_domain}")
+                logger.info(f" Generating rule suggestions for CSV download of domain: {normalized_domain}")
                 try:
                     # Convert our schema format to the format expected by run_agent
                     agent_schema = {}
@@ -712,7 +712,7 @@ async def regenerate_suggestions(request: Request):
                 }
             },
             "next_steps": {
-                "after_confirm": [
+                "after_confirmation": [
                     "Schema will be saved to vector database",
                     "Optional: Download sample CSV data",
                     "Call /api/aips/domain/create"
@@ -868,7 +868,7 @@ async def extend_domain(request: Request):
         
         # Add the new columns to the existing domain
         combined_schema = existing_columns + new_columns
-        
+
         # Store the extended domain
         domain_data = {
             "domain": domain_name,
@@ -882,13 +882,25 @@ async def extend_domain(request: Request):
                 "extension_style": style
             }
         }
-        
+
+        # Generate embeddings for all new columns
+        from app.embedding.embedder import embed_column_names_batched_async
+        new_column_names = [col["column_name"] for col in new_columns]
+        try:
+            new_embeddings = await embed_column_names_batched_async(new_column_names)
+        except Exception as e:
+            logger.error(f"Failed to generate embeddings for new columns: {e}")
+            new_embeddings = [[] for _ in new_column_names]  # fallback to empty embeddings
+
         # Create extended domain in vector store
         store = get_store()
-        for column in new_columns:
-            # Create column document
+        # Batch upsert all new columns at once
+        column_docs = []
+        for i, column in enumerate(new_columns):
             column_doc = ColumnDoc(
+                column_id=f"{domain_name}.{column['column_name']}",
                 column_name=column["column_name"],
+                embedding=new_embeddings[i],
                 sample_values=column.get("sample_values", []),
                 metadata={
                     "domain": domain_name,
@@ -898,9 +910,8 @@ async def extend_domain(request: Request):
                     "extension_focus": focus_area
                 }
             )
-            
-            # Add to vector store
-            await store.add_column(column_doc)
+            column_docs.append(column_doc)
+        store.upsert_columns(column_docs)
         
         return JSONResponse({
             "status": "success",
@@ -945,7 +956,10 @@ async def suggest_extensions(domain_name: str, request: Request):
     based on the existing schema and user-specified preferences or focus areas.
     """
     try:
-        body = await request.json()
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}  # Default to empty dict if body is empty or invalid
         
         # Get existing domain schema
         store = get_store()
