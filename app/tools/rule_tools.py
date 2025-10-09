@@ -127,10 +127,10 @@ def format_gx_rules(raw_text: str) -> list:
     # Try direct JSON parsing first
     try:
         parsed = json.loads(raw_text)
-        logger.info("✅ Successfully parsed JSON directly")
+        logger.info(" Successfully parsed JSON directly")
         return parsed if isinstance(parsed, list) else [parsed]
     except json.JSONDecodeError as e:
-        logger.warning("⚠️ Direct JSON parse failed: %s", e)
+        logger.warning(" Direct JSON parse failed: %s", e)
 
     # Fix regex escape issues comprehensively
     try:
@@ -147,10 +147,10 @@ def format_gx_rules(raw_text: str) -> list:
         
         cleaned_text = fix_regex_patterns(raw_text)
         parsed = json.loads(cleaned_text)
-        logger.info("✅ Successfully parsed JSON after fixing regex patterns")
+        logger.info(" Successfully parsed JSON after fixing regex patterns")
         return parsed if isinstance(parsed, list) else [parsed]
     except json.JSONDecodeError as e:
-        logger.warning("⚠️ JSON parse failed after regex fixing: %s", e)
+        logger.warning(" JSON parse failed after regex fixing: %s", e)
 
     # Final fallback: extract individual column objects manually
     try:
@@ -173,20 +173,20 @@ def format_gx_rules(raw_text: str) -> list:
                 # Verify it's a proper column object
                 if isinstance(obj, dict) and "column" in obj:
                     parsed_objects.append(obj)
-                    logger.info(f"✅ Parsed object {i+1}: {obj.get('column')}")
+                    logger.info(f" Parsed object {i+1}: {obj.get('column')}")
                     
             except json.JSONDecodeError as e:
-                logger.warning(f"⚠️ Failed to parse object {i+1}: {e}")
+                logger.warning(f" Failed to parse object {i+1}: {e}")
         
         if parsed_objects:
-            logger.info(f"✅ Successfully extracted {len(parsed_objects)} column objects")
+            logger.info(f" Successfully extracted {len(parsed_objects)} column objects")
             return parsed_objects
         else:
-            logger.error("❌ No valid column objects found")
+            logger.error(" No valid column objects found")
             return [{"error": "No valid rules parsed", "raw": raw_text}]
             
     except Exception as e:
-        logger.error(f"❌ Fallback parsing failed: {e}")
+        logger.error(f" Fallback parsing failed: {e}")
         return [{"error": f"Could not parse rules: {e}", "raw": raw_text}]
 
 @tool
@@ -200,7 +200,7 @@ def normalize_rule_suggestions(rule_input: dict) -> dict:
 
     raw = rule_input.get("raw", [])
     if not isinstance(raw, list):
-        logger.warning("⚠️ Expected list under 'raw', got: %s", type(raw))
+        logger.warning(" Expected list under 'raw', got: %s", type(raw))
         return {"error": "Invalid input type", "raw": raw}
 
     logger.info(f"🔍 Normalizing {len(raw)} raw rule objects")
@@ -209,23 +209,23 @@ def normalize_rule_suggestions(rule_input: dict) -> dict:
     for i, item in enumerate(raw):
         try:
             # Debug logging
-            logger.info(f"🔍 Processing item {i+1}: {type(item)} - {item}")
+            logger.info(f" Processing item {i+1}: {type(item)} - {item}")
             
             if not isinstance(item, dict):
-                logger.warning(f"⚠️ Item {i+1} is not a dict: {type(item)}")
+                logger.warning(f" Item {i+1} is not a dict: {type(item)}")
                 continue
                 
             if "column" not in item:
-                logger.warning(f"⚠️ Item {i+1} missing 'column' key. Keys: {list(item.keys())}")
+                logger.warning(f" Item {i+1} missing 'column' key. Keys: {list(item.keys())}")
                 continue
                 
             column = item["column"]
             expectations = item.get("expectations", [])
             result[column] = {"expectations": expectations}
-            logger.info(f"✅ Successfully processed column '{column}' with {len(expectations)} expectations")
+            logger.info(f" Successfully processed column '{column}' with {len(expectations)} expectations")
             
         except Exception as e:
-            logger.warning("⚠️ Exception processing item %d: %s", i+1, e)
+            logger.warning(" Exception processing item %d: %s", i+1, e)
 
     logger.info(f"🎯 Normalization complete: {len(result)} columns processed")
     return result

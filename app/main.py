@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from app.api.domain_schema_routes import router as domain_schema_router
 from app.api.rule_suggestion_routes import router as rule_suggestion_router
-from app.api.routes import router as vector_router
+from app.api.aoss_routes import router as vector_router
 from app.core.exceptions import (
     authentication_exception_handler,
     general_exception_handler,
@@ -11,6 +11,14 @@ from app.core.exceptions import (
     internal_server_error_handler
 )
 import time, logging
+
+# Import validation router
+try:
+    from app.api.validator_routes import validation_router
+    VALIDATION_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"Validation router not available: {e}")
+    VALIDATION_AVAILABLE = False
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -45,7 +53,7 @@ async def log_requests(request: Request, call_next):
 @app.get("/api/aips/health")
 def health():
     """Enhanced health check with AWS connection status"""
-    from app.api.routes import get_store
+    from app.api.aoss_routes import get_store
     
     health_status = {
         "service_name": "EDGP AI Policy Suggest Microservice",
@@ -54,7 +62,8 @@ def health():
         "timestamp": time.time(),
         "services": {
             "fastapi": "healthy",
-            "opensearch": "unknown"
+            "opensearch": "unknown",
+            "validation": "unknown"
         }
     }
     
@@ -76,17 +85,35 @@ def health():
         health_status["services"]["opensearch"] = "error"
         health_status["opensearch_error"] = str(e)[:100]
     
+    # Test validation system
+    if VALIDATION_AVAILABLE:
+        try:
+            from app.validation.llm_validator import LLMResponseValidator
+            validator = LLMResponseValidator()
+            health_status["services"]["validation"] = "healthy"
+        except Exception as e:
+            health_status["services"]["validation"] = "error"
+            health_status["validation_error"] = str(e)[:100]
+    else:
+        health_status["services"]["validation"] = "unavailable"
+        health_status["validation_message"] = "Validation system not installed"
+    
     # Overall status
-    if health_status["services"]["opensearch"] != "healthy":
+    unhealthy_services = [
+        service for service, status in health_status["services"].items() 
+        if status not in ["healthy", "unknown"]
+    ]
+    
+    if unhealthy_services:
         health_status["status"] = "degraded"
-        health_status["message"] = "Some services are unavailable"
+        health_status["message"] = f"Some services are unavailable: {', '.join(unhealthy_services)}"
     
     return health_status
 
 @app.get("/api/aips/info")
 def service_info():
     """Service information endpoint"""
-    from app.api.routes import get_store
+    from app.api.aoss_routes import get_store
     info = {
         "service_name": "EDGP AI Policy Suggest Microservice",
         "version": "1.0",
@@ -146,6 +173,40 @@ def service_info():
         "repository": "edgp-ai-policy-suggest",
         "branch": "task/llm-validation"
     }
+    
+    # Add validation endpoints if available
+    if VALIDATION_AVAILABLE:
+        info["endpoints"].update({
+            "validation_metrics": {
+                "method": "GET",
+                "path": "/api/aips/validation/metrics",
+                "description": "Get LLM validation metrics and statistics"
+            },
+            "validate_schema": {
+                "method": "POST",
+                "path": "/api/aips/validation/validate-schema",
+                "description": "Validate an LLM-generated schema response"
+            },
+            "validate_rules": {
+                "method": "POST",
+                "path": "/api/aips/validation/validate-rules",
+                "description": "Validate LLM-generated rules"
+            },
+            "validation_health": {
+                "method": "GET",
+                "path": "/api/aips/validation/health",
+                "description": "Health check for validation system"
+            },
+            "validation_test": {
+                "method": "POST",
+                "path": "/api/aips/validation/test",
+                "description": "Test endpoint for validation system"
+            }
+        })
+        info["validation_system"] = "enabled"
+    else:
+        info["validation_system"] = "disabled"
+    
     # Live vector DB status
     try:
         store = get_store()
@@ -182,6 +243,13 @@ def service_info():
 app.include_router(domain_schema_router)
 app.include_router(rule_suggestion_router)
 app.include_router(vector_router)
+
+# Include validation router if available
+if VALIDATION_AVAILABLE:
+    app.include_router(validation_router, prefix="/api/aips")
+    logging.info("Validation router successfully included with prefix /api/aips")
+else:
+    logging.warning("Validation router not included - validation module unavailable")
 
 if __name__ == "__main__":
     import uvicorn

@@ -8,13 +8,13 @@ import tempfile
 import os
 from unittest.mock import Mock, patch, AsyncMock
 from fastapi.responses import JSONResponse, FileResponse
-from app.api.routes import (
-    check_vectordb_status, download_csv_file, get_store
-)
+from app.api.aoss_routes import check_vectordb_status
+from app.api.domain_schema_routes import download_csv_file
+from app.aoss.column_store import get_store
 
 class TestVectorStatusRoute:
     @pytest.mark.asyncio
-    @patch('app.api.routes.get_store')
+    @patch('app.api.aoss_routes.get_store')
     async def test_vector_status_success(self, mock_get_store):
         mock_client = Mock()
         mock_client.indices.exists.return_value = True
@@ -41,7 +41,7 @@ class TestVectorStatusRoute:
         assert content["document_count"] == 100
 
     @pytest.mark.asyncio
-    @patch('app.api.routes.get_store')
+    @patch('app.api.aoss_routes.get_store')
     async def test_vector_status_no_index(self, mock_get_store):
         mock_client = Mock()
         mock_client.indices.exists.return_value = False
@@ -57,7 +57,7 @@ class TestVectorStatusRoute:
         assert content["index_exists"] is False
 
     @pytest.mark.asyncio
-    @patch('app.api.routes.get_store')
+    @patch('app.api.aoss_routes.get_store')
     async def test_vector_status_store_unavailable(self, mock_get_store):
         mock_get_store.return_value = None
         result = await check_vectordb_status()
@@ -105,7 +105,7 @@ class TestDownloadCSVRoute:
 @pytest.fixture(autouse=True)
 def reset_store():
     """Reset the global _store before and after each test in this module"""
-    import app.api.routes
-    app.api.routes._store = None
+    import app.api.aoss_routes
+    app.api.aoss_routes._store = None
     yield
-    app.api.routes._store = None
+    app.api.aoss_routes._store = None

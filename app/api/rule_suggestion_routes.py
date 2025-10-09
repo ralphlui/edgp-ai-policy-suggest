@@ -8,10 +8,10 @@ import logging
 import traceback
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(prefix="/api/aips/rule", tags=["rule-suggestions"])
 
 
-@router.post("/api/aips/suggest-rules")
+@router.post("/suggest")
 async def suggest_rules(
     domain: str = Body(..., embed=True),
     user: UserInfo = Depends(verify_any_scope_token)

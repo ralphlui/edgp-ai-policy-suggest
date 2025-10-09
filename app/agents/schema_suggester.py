@@ -41,6 +41,8 @@ from app.vector_db.schema_loader import validate_column_schema
 from app.core.config import settings
 from app.core.aws_secrets_service import require_openai_api_key
 from app.core.exceptions import SchemaGenerationError
+from app.validation.llm_validator import validate_llm_response, ValidationSeverity
+from app.validation.metrics import record_validation_metric
 
 logger = logging.getLogger(__name__)
 
@@ -274,7 +276,50 @@ def format_llm_schema(raw: Dict[str, Any], strict_validation: bool = True) -> Di
     """
     logger.info(f" Formatting LLM response with {len(raw.get('columns', []))} columns")
     
-    columns = raw.get("columns", [])
+    # Track validation timing for metrics
+    validation_start_time = time.time()
+    
+    # First, validate the entire response using the new validation system
+    validation_result = validate_llm_response(
+        response=raw, 
+        response_type="schema", 
+        strict_mode=strict_validation,
+        auto_correct=True
+    )
+    
+    # Record validation metrics
+    validation_time_ms = (time.time() - validation_start_time) * 1000
+    domain = raw.get("domain", "unknown")
+    try:
+        record_validation_metric(
+            domain=domain,
+            response_type="schema",
+            validation_result=validation_result,
+            validation_time_ms=validation_time_ms
+        )
+    except Exception as e:
+        logger.warning(f"Failed to record validation metrics: {e}")
+    
+    # Log validation results
+    if validation_result.issues:
+        logger.warning(f" Validation found {len(validation_result.issues)} issues:")
+        for issue in validation_result.issues:
+            logger.warning(f"   {issue.severity.value.upper()}: {issue.field} - {issue.message}")
+    
+    logger.info(f" Validation confidence score: {validation_result.confidence_score}")
+    
+    # Use corrected data if available and auto-correction was enabled
+    working_data = validation_result.corrected_data if validation_result.corrected_data else raw
+    
+    # Check if validation failed critically
+    if not validation_result.is_valid and strict_validation:
+        critical_issues = [issue for issue in validation_result.issues if issue.severity == ValidationSeverity.CRITICAL]
+        if critical_issues:
+            error_msg = f"Critical validation errors: {[issue.message for issue in critical_issues]}"
+            logger.error(f" {error_msg}")
+            raise SchemaGenerationError(error_msg)
+    
+    columns = working_data.get("columns", [])
     if not columns:
         raise SchemaGenerationError("No columns found in LLM response")
     

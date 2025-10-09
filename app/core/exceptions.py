@@ -19,6 +19,14 @@ class SchemaGenerationError(Exception):
         super().__init__(self.message)
 
 
+class ValidationError(Exception):
+    """Exception raised when validation fails"""
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        self.message = message
+        self.details = details or {}
+        super().__init__(self.message)
+
+
 class StandardResponse(BaseModel):
     """Standardized API response format"""
     data: Optional[Any] = None

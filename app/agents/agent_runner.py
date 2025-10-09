@@ -9,7 +9,10 @@ from app.tools.rule_tools import (
     normalize_rule_suggestions,
     convert_to_rule_ms_format
 )
+from app.validation.llm_validator import validate_llm_response
+from app.validation.metrics import record_validation_metric
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -74,12 +77,101 @@ def build_graph():
     return workflow.compile()
 
 def run_agent(schema: dict) -> List[Dict[str, Any]]:
-    graph = build_graph()
-    result = graph.invoke(AgentState(data_schema=schema))
+    """
+    Run the rule suggestion agent with enhanced validation and metrics tracking
+    
+    Args:
+        schema: Domain schema dictionary
+        
+    Returns:
+        List of validated rule suggestions
+    """
+    validation_start_time = time.time()
+    domain = schema.get("domain", "unknown")
+    
+    try:
+        graph = build_graph()
+        result = graph.invoke(AgentState(data_schema=schema))
 
-    if isinstance(result, dict):
-        logger.warning("LangGraph returned dict instead of AgentState")
-        return result.get("rule_suggestions", [])
+        if isinstance(result, dict):
+            logger.warning("LangGraph returned dict instead of AgentState")
+            rule_suggestions = result.get("rule_suggestions", [])
+        else:
+            rule_suggestions = result.rule_suggestions or []
 
-    logger.info("Final rule suggestions: %s", result.rule_suggestions)
-    return result.rule_suggestions or []
+        logger.info("Generated rule suggestions: %s", rule_suggestions)
+        
+        # Validate the generated rules using the new validation system
+        if rule_suggestions:
+            # Convert to expected validation format
+            validation_response = {
+                "domain": domain,
+                "rules": rule_suggestions,
+                "explanation": "Generated rule suggestions for domain validation"
+            }
+            
+            validation_result = validate_llm_response(
+                response=validation_response,
+                response_type="rule",
+                strict_mode=False,  # Use lenient mode for rule validation
+                auto_correct=True
+            )
+            
+            # Record validation metrics
+            validation_time_ms = (time.time() - validation_start_time) * 1000
+            try:
+                record_validation_metric(
+                    domain=domain,
+                    response_type="rule",
+                    validation_result=validation_result,
+                    validation_time_ms=validation_time_ms
+                )
+            except Exception as e:
+                logger.warning(f"Failed to record rule validation metrics: {e}")
+            
+            # Log validation results
+            if validation_result.issues:
+                logger.warning(f"Rule validation found {len(validation_result.issues)} issues:")
+                for issue in validation_result.issues:
+                    logger.warning(f"  {issue.severity.value.upper()}: {issue.field} - {issue.message}")
+            
+            logger.info(f"Rule validation confidence score: {validation_result.confidence_score}")
+            
+            # Use corrected rules if available
+            if validation_result.corrected_data and validation_result.corrected_data.get("rules"):
+                logger.info("Using auto-corrected rule suggestions")
+                rule_suggestions = validation_result.corrected_data["rules"]
+        
+        return rule_suggestions
+        
+    except Exception as e:
+        logger.error(f"Rule generation failed for domain {domain}: {e}")
+        
+        # Record failed validation metrics
+        validation_time_ms = (time.time() - validation_start_time) * 1000
+        try:
+            from app.validation.llm_validator import ValidationResult, ValidationIssue, ValidationSeverity
+            
+            failed_result = ValidationResult(
+                is_valid=False,
+                confidence_score=0.0,
+                issues=[ValidationIssue(
+                    field="rule_generation",
+                    severity=ValidationSeverity.CRITICAL,
+                    message=f"Rule generation failed: {str(e)}",
+                    suggestion="Check logs and retry"
+                )],
+                corrected_data=None,
+                metadata={"error": str(e)}
+            )
+            
+            record_validation_metric(
+                domain=domain,
+                response_type="rule",
+                validation_result=failed_result,
+                validation_time_ms=validation_time_ms
+            )
+        except Exception as metrics_error:
+            logger.warning(f"Failed to record failure metrics: {metrics_error}")
+        
+        return []

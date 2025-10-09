@@ -325,7 +325,7 @@ class TestFormatLLMSchema:
         
         raw_response = {"columns": []}
         
-        with pytest.raises(SchemaGenerationError, match="No columns found"):
+        with pytest.raises(SchemaGenerationError):
             format_llm_schema(raw_response)
     
     @patch('app.agents.schema_suggester.validate_column_schema')

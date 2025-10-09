@@ -8,7 +8,7 @@ import traceback
 import logging, time, pandas as pd, io
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(prefix="/api/aips/domain", tags=["domain-schema"])
 
 # --- Domain & Schema Endpoints ---
 
@@ -25,7 +25,7 @@ def get_store() -> OpenSearchColumnStore:
             return None
     return _store
 
-@router.post("/api/aips/domain/create")
+@router.post("/create")
 async def create_domain(
     request: Request,
     payload: dict = Body(...),
@@ -394,7 +394,7 @@ async def create_domain(
                 response_data["rule_suggestions"] = []
                 response_data["total_rules"] = 0
                 response_data["rule_generation_error"] = str(agentic_error)
-                response_data["message"] += " Automatic rule generation failed. Call /api/aips/suggest-rules to generate validation rules manually."
+                response_data["message"] += " Automatic rule generation failed. Call /api/aips/rule/suggest to generate validation rules manually."
                 
         else:
             response_data["status"] = "partial_success"
@@ -412,7 +412,7 @@ async def create_domain(
 
 
 
-@router.get("/api/aips/domains")
+@router.get("/domains")
 async def get_domains(
     user: UserInfo = Depends(verify_any_scope_token)
 ):
@@ -452,7 +452,7 @@ async def get_domains(
 
 
 
-@router.get("/api/aips/domains/verify/{domain_name}")
+@router.get("/verify/{domain_name}")
 async def verify_domain_exists(
     domain_name: str,
     user: UserInfo = Depends(verify_any_scope_token)
@@ -499,7 +499,7 @@ async def verify_domain_exists(
         }, status_code=500)
     
 
-@router.get("/api/aips/domains-schema")
+@router.get("/schema")
 async def list_domains_in_vectordb():
     """List all domains stored in the vector database."""
     try:
@@ -555,7 +555,7 @@ async def list_domains_in_vectordb():
         }, status_code=500)
 
 
-@router.get("/api/aips/domain/{domain_name}")
+@router.get("/{domain_name}")
 async def get_domain_from_vectordb(domain_name: str):
     """Get specific domain details from vector database."""
     try:
@@ -615,7 +615,7 @@ async def get_domain_from_vectordb(domain_name: str):
         }, status_code=500)
 
 
-@router.get("/api/aips/domain/download-csv/{filename}")
+@router.get("/download-csv/{filename}")
 async def download_csv_file(filename: str):
     """Download CSV file generated during domain creation."""
     try:
@@ -652,7 +652,7 @@ async def download_csv_file(filename: str):
         }, status_code=500)
     
 
-@router.post("/api/aips/domain/suggest-schema")
+@router.post("/suggest-schema")
 async def regenerate_suggestions(request: Request):
     """
     AI-powered domain schema suggestions. User only needs to provide 'domain'.
@@ -727,7 +727,7 @@ async def regenerate_suggestions(request: Request):
         }, status_code=500)
     
 
-@router.put("/api/aips/domain/extend-schema")
+@router.put("/extend-schema")
 async def extend_domain(request: Request):
     """
     Extend an existing domain with new columns using AI suggestions.
@@ -947,7 +947,7 @@ async def extend_domain(request: Request):
         }, status_code=500)
     
 
-@router.post("/api/aips/domain/suggest-extend-schema/{domain_name}")
+@router.post("/suggest-extend-schema/{domain_name}")
 async def suggest_extensions(domain_name: str, request: Request):
     """
     Suggest additional columns for an existing domain without modifying it.

@@ -66,8 +66,9 @@ class TestAgentRunnerModule:
         
         from app.agents.agent_runner import run_agent
         
-        with pytest.raises(Exception):
-            run_agent({"col1": {"type": "string"}})
+        # The function now catches exceptions and returns an empty list
+        result = run_agent({"col1": {"type": "string"}})
+        assert result == []
 
     @patch('app.agents.agent_runner.build_graph')
     def test_run_agent_complex_query(self, mock_build_graph):
