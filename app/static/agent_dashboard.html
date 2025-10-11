@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced Agent Insights Dashboard</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 2.5em;
+            font-weight: 300;
+        }
+        .header p {
+            margin: 10px 0 0 0;
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+        .main-content {
+            padding: 30px;
+        }
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            border-left: 4px solid #667eea;
+        }
+        .input-section {
+            margin-bottom: 30px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #555;
+        }
+        .form-group textarea, .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e1e5e9;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        .form-group textarea:focus, .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-right: 10px;
+            margin-bottom: 10px;
+            transition: transform 0.2s;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .results-section {
+            margin-top: 30px;
+        }
+        .tabs {
+            display: flex;
+            border-bottom: 2px solid #e1e5e9;
+            margin-bottom: 20px;
+        }
+        .tab {
+            padding: 12px 24px;
+            cursor: pointer;
+            border: none;
+            background: none;
+            font-size: 16px;
+            color: #666;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+        }
+        .tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+            font-weight: 600;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .metric-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .metric-card {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            border: 1px solid #e1e5e9;
+        }
+        .metric-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #667eea;
+            display: block;
+        }
+        .metric-label {
+            color: #666;
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+        .reasoning-chain {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .reasoning-step {
+            margin-bottom: 15px;
+            padding: 15px;
+            background: white;
+            border-radius: 6px;
+            border-left: 4px solid #28a745;
+        }
+        .step-header {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+        }
+        .step-content {
+            color: #666;
+            line-height: 1.5;
+        }
+        .trace-timeline {
+            position: relative;
+            padding-left: 30px;
+        }
+        .trace-timeline::before {
+            content: '';
+            position: absolute;
+            left: 15px;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: #667eea;
+        }
+        .trace-item {
+            position: relative;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: white;
+            border-radius: 8px;
+            border: 1px solid #e1e5e9;
+        }
+        .trace-item::before {
+            content: '';
+            position: absolute;
+            left: -22px;
+            top: 20px;
+            width: 12px;
+            height: 12px;
+            background: #667eea;
+            border-radius: 50%;
+            border: 3px solid white;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            border-left: 4px solid #dc3545;
+        }
+        .success {
+            background: #d4edda;
+            color: #155724;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            border-left: 4px solid #28a745;
+        }
+        pre {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 Enhanced Agent Insights Dashboard</h1>
+            <p>Monitor and analyze your AI agent's reasoning, planning, and execution process</p>
+        </div>
+        
+        <div class="main-content">
+            <div class="card input-section">
+                <h2>🔧 Agent Configuration</h2>
+                
+                <div class="form-group">
+                    <label for="analysisType">Analysis Type:</label>
+                    <select id="analysisType">
+                        <option value="full">Full Analysis with Insights</option>
+                        <option value="plan">Planning Only</option>
+                        <option value="trace">Execution Tracing</option>
+                        <option value="report">Generate Report</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="schemaInput">Schema (JSON format):</label>
+                    <textarea id="schemaInput" rows="10" placeholder='Enter your schema here, for example:
+{
+  "domain": "customer",
+  "email": {
+    "dtype": "string",
+    "sample_values": ["user@example.com", "contact@company.org"]
+  },
+  "phone": {
+    "dtype": "string", 
+    "sample_values": ["+1-555-123-4567"]
+  },
+  "age": {
+    "dtype": "integer",
+    "sample_values": ["25", "30", "45"]
+  }
+}'></textarea>
+                </div>
+                
+                <button class="btn" onclick="runAnalysis()">🚀 Run Analysis</button>
+                <button class="btn" onclick="loadSample()">📝 Load Sample</button>
+                <button class="btn" onclick="clearResults()">🗑️ Clear Results</button>
+            </div>
+            
+            <div id="results" class="results-section" style="display: none;">
+                <div class="tabs">
+                    <button class="tab active" onclick="showTab('overview')">📊 Overview</button>
+                    <button class="tab" onclick="showTab('reasoning')">🧠 Reasoning</button>
+                    <button class="tab" onclick="showTab('trace')">📋 Execution Trace</button>
+                    <button class="tab" onclick="showTab('rules')">⚙️ Generated Rules</button>
+                    <button class="tab" onclick="showTab('raw')">🔍 Raw Data</button>
+                </div>
+                
+                <div id="overview" class="tab-content active">
+                    <div class="metric-grid" id="metricsGrid">
+                        <!-- Metrics will be populated here -->
+                    </div>
+                    <div id="summaryInfo">
+                        <!-- Summary information will be populated here -->
+                    </div>
+                </div>
+                
+                <div id="reasoning" class="tab-content">
+                    <div id="reasoningContent">
+                        <!-- Reasoning chain will be populated here -->
+                    </div>
+                </div>
+                
+                <div id="trace" class="tab-content">
+                    <div id="traceContent">
+                        <!-- Execution trace will be populated here -->
+                    </div>
+                </div>
+                
+                <div id="rules" class="tab-content">
+                    <div id="rulesContent">
+                        <!-- Generated rules will be populated here -->
+                    </div>
+                </div>
+                
+                <div id="raw" class="tab-content">
+                    <div id="rawContent">
+                        <!-- Raw data will be populated here -->
+                    </div>
+                </div>
+            </div>
+            
+            <div id="loading" class="loading" style="display: none;">
+                <h3>🔄 Analyzing...</h3>
+                <p>Your AI agent is working on the analysis. This may take a few moments.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentResults = null;
+
+        function loadSample() {
+            const sampleSchema = {
+                "domain": "customer",
+                "email": {
+                    "dtype": "string",
+                    "sample_values": ["user@example.com", "contact@company.org", "support@business.net"]
+                },
+                "phone_number": {
+                    "dtype": "string",
+                    "sample_values": ["+1-555-123-4567", "+1-555-987-6543", "+44-20-7946-0958"]
+                },
+                "age": {
+                    "dtype": "integer",
+                    "sample_values": ["25", "30", "45", "33", "28"]
+                },
+                "status": {
+                    "dtype": "string",
+                    "sample_values": ["active", "inactive", "pending", "suspended"]
+                },
+                "signup_date": {
+                    "dtype": "date",
+                    "sample_values": ["2022-01-01", "2022-02-15", "2023-03-10"]
+                },
+                "balance": {
+                    "dtype": "float",
+                    "sample_values": ["100.50", "250.75", "0.00", "1500.25"]
+                }
+            };
+            document.getElementById('schemaInput').value = JSON.stringify(sampleSchema, null, 2);
+        }
+
+        function clearResults() {
+            document.getElementById('results').style.display = 'none';
+            currentResults = null;
+        }
+
+        function showTab(tabName) {
+            // Hide all tab contents
+            const tabContents = document.querySelectorAll('.tab-content');
+            tabContents.forEach(content => content.classList.remove('active'));
+            
+            // Remove active class from all tabs
+            const tabs = document.querySelectorAll('.tab');
+            tabs.forEach(tab => tab.classList.remove('active'));
+            
+            // Show selected tab content
+            document.getElementById(tabName).classList.add('active');
+            
+            // Add active class to clicked tab
+            event.target.classList.add('active');
+        }
+
+        async function runAnalysis() {
+            const schemaText = document.getElementById('schemaInput').value;
+            const analysisType = document.getElementById('analysisType').value;
+            
+            if (!schemaText.trim()) {
+                showError('Please enter a schema to analyze');
+                return;
+            }
+            
+            let schema;
+            try {
+                schema = JSON.parse(schemaText);
+            } catch (e) {
+                showError('Invalid JSON format. Please check your schema syntax.');
+                return;
+            }
+            
+            showLoading(true);
+            clearError();
+            
+            try {
+                let endpoint;
+                let requestData = { schema: schema };
+                
+                switch (analysisType) {
+                    case 'full':
+                        endpoint = '/api/aips/agent/analyze-with-insights';
+                        break;
+                    case 'plan':
+                        endpoint = '/api/aips/agent/plan-analysis';
+                        break;
+                    case 'trace':
+                        endpoint = '/api/aips/agent/trace-execution';
+                        break;
+                    case 'report':
+                        endpoint = '/api/aips/agent/generate-report';
+                        break;
+                    default:
+                        endpoint = '/api/aips/agent/analyze-with-insights';
+                }
+                
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestData)
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || 'Analysis failed');
+                }
+                
+                if (analysisType === 'report') {
+                    const reportText = await response.text();
+                    showReport(reportText);
+                } else {
+                    const data = await response.json();
+                    currentResults = data;
+                    displayResults(data, analysisType);
+                }
+                
+            } catch (error) {
+                showError(`Analysis failed: ${error.message}`);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
+            document.getElementById('results').style.display = show ? 'none' : 'block';
+        }
+
+        function showError(message) {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = `<div class="error"><strong>Error:</strong> ${message}</div>`;
+            resultsDiv.style.display = 'block';
+        }
+
+        function clearError() {
+            const errorElements = document.querySelectorAll('.error');
+            errorElements.forEach(el => el.remove());
+        }
+
+        function showReport(reportText) {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = `
+                <div class="card">
+                    <h2>📊 Agent Execution Report</h2>
+                    <pre>${reportText}</pre>
+                    <button class="btn" onclick="downloadReport()">💾 Download Report</button>
+                </div>
+            `;
+            resultsDiv.style.display = 'block';
+        }
+
+        function displayResults(data, analysisType) {
+            document.getElementById('results').style.display = 'block';
+            
+            if (analysisType === 'full') {
+                displayFullAnalysis(data);
+            } else if (analysisType === 'plan') {
+                displayPlanAnalysis(data);
+            } else if (analysisType === 'trace') {
+                displayTraceAnalysis(data);
+            }
+        }
+
+        function displayFullAnalysis(data) {
+            // Display metrics
+            const metricsGrid = document.getElementById('metricsGrid');
+            const summary = data.summary || {};
+            
+            metricsGrid.innerHTML = `
+                <div class="metric-card">
+                    <span class="metric-value">${summary.rules_generated || 0}</span>
+                    <div class="metric-label">Rules Generated</div>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-value">${summary.reasoning_cycles || 0}</span>
+                    <div class="metric-label">Reasoning Cycles</div>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-value">${summary.observations_made || 0}</span>
+                    <div class="metric-label">Observations</div>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-value">${(summary.success_rate * 100).toFixed(1)}%</span>
+                    <div class="metric-label">Success Rate</div>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-value">${(data.agent_insights?.execution_time || 0).toFixed(2)}s</span>
+                    <div class="metric-label">Execution Time</div>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-value">${summary.total_steps || 0}</span>
+                    <div class="metric-label">Total Steps</div>
+                </div>
+            `;
+
+            // Display reasoning chain
+            const reasoningContent = document.getElementById('reasoningContent');
+            const reasoning = data.agent_insights?.reasoning_chain || [];
+            
+            reasoningContent.innerHTML = `
+                <div class="reasoning-chain">
+                    <h3>🧠 Agent Reasoning Process</h3>
+                    ${reasoning.map((thought, index) => `
+                        <div class="reasoning-step">
+                            <div class="step-header">Step ${index + 1}: Thinking</div>
+                            <div class="step-content">${thought}</div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+
+            // Display execution trace
+            const traceContent = document.getElementById('traceContent');
+            const trace = data.step_by_step_trace || [];
+            
+            traceContent.innerHTML = `
+                <div class="trace-timeline">
+                    <h3>📋 Step-by-Step Execution Trace</h3>
+                    ${trace.map((step, index) => `
+                        <div class="trace-item">
+                            <div class="step-header">
+                                <strong>${step.action}</strong> 
+                                <span style="color: #666; font-size: 0.9em;">
+                                    (${new Date(step.timestamp * 1000).toLocaleTimeString()})
+                                </span>
+                            </div>
+                            <div class="step-content">
+                                <p><strong>Thought:</strong> ${step.thought}</p>
+                                <p><strong>Observation:</strong> ${step.observation}</p>
+                                ${step.reflection ? `<p><strong>Reflection:</strong> ${step.reflection}</p>` : ''}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+
+            // Display generated rules
+            const rulesContent = document.getElementById('rulesContent');
+            const rules = data.rule_suggestions || [];
+            
+            rulesContent.innerHTML = `
+                <div class="card">
+                    <h3>⚙️ Generated Validation Rules</h3>
+                    <p>Generated ${rules.length} validation rules for the provided schema.</p>
+                    <pre>${JSON.stringify(rules, null, 2)}</pre>
+                </div>
+            `;
+
+            // Display raw data
+            const rawContent = document.getElementById('rawContent');
+            rawContent.innerHTML = `
+                <div class="card">
+                    <h3>🔍 Complete Response Data</h3>
+                    <pre>${JSON.stringify(data, null, 2)}</pre>
+                </div>
+            `;
+        }
+
+        function displayPlanAnalysis(data) {
+            const summaryInfo = document.getElementById('summaryInfo');
+            const plan = data.plan || {};
+            const analysis = data.schema_analysis || {};
+            
+            summaryInfo.innerHTML = `
+                <div class="card">
+                    <h3>📋 Execution Plan</h3>
+                    <p><strong>Goal:</strong> ${plan.goal}</p>
+                    <p><strong>Complexity:</strong> ${analysis.complexity}</p>
+                    <p><strong>Column Count:</strong> ${analysis.column_count}</p>
+                    <p><strong>Estimated Duration:</strong> ${plan.estimated_duration}s</p>
+                    
+                    <h4>Planned Steps:</h4>
+                    <ol>
+                        ${plan.steps?.map(step => `<li>${step}</li>`).join('') || ''}
+                    </ol>
+                    
+                    <h4>Constraints:</h4>
+                    <ul>
+                        ${plan.constraints?.map(constraint => `<li>${constraint}</li>`).join('') || ''}
+                    </ul>
+                </div>
+            `;
+        }
+
+        function displayTraceAnalysis(data) {
+            const summaryInfo = document.getElementById('summaryInfo');
+            const trace = data.detailed_trace || [];
+            const summary = data.execution_summary || {};
+            
+            summaryInfo.innerHTML = `
+                <div class="card">
+                    <h3>🔍 Execution Trace Summary</h3>
+                    <p><strong>Total Time:</strong> ${summary.total_time?.toFixed(2)}s</p>
+                    <p><strong>Steps Executed:</strong> ${summary.steps_executed}</p>
+                    <p><strong>Success:</strong> ${summary.success ? '✅ Yes' : '❌ No'}</p>
+                    <p><strong>Rules Generated:</strong> ${summary.rules_generated}</p>
+                </div>
+                
+                <div class="trace-timeline">
+                    <h3>📋 Detailed Execution Steps</h3>
+                    ${trace.map((step, index) => `
+                        <div class="trace-item">
+                            <div class="step-header">
+                                Step ${step.step}: ${step.action}
+                                <span style="color: #666; font-size: 0.9em;">
+                                    (${new Date(step.timestamp * 1000).toLocaleTimeString()})
+                                </span>
+                            </div>
+                            <div class="step-content">
+                                <p><strong>Thought:</strong> ${step.thought}</p>
+                                <p><strong>Observation:</strong> ${step.observation}</p>
+                                ${step.duration ? `<p><strong>Duration:</strong> ${step.duration}s</p>` : ''}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        function downloadReport() {
+            // Create a download link for the report
+            const reportText = document.querySelector('pre').textContent;
+            const blob = new Blob([reportText], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'agent_execution_report.md';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        // Initialize with sample data
+        window.onload = function() {
+            loadSample();
+        };
+    </script>
+</body>
+</html>

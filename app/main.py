@@ -1,9 +1,13 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+import os
 from app.api.domain_schema_routes import router as domain_schema_router
 from app.api.rule_suggestion_routes import router as rule_suggestion_router
 from app.api.aoss_routes import router as vector_router
+from app.api.agent_insights_routes import router as agent_insights_router
 from app.core.exceptions import (
     authentication_exception_handler,
     general_exception_handler,
@@ -131,8 +135,8 @@ def service_info():
             },
             "suggest_rules": {
                 "method": "POST",
-                "path": "/api/aips/suggest-rules",
-                "description": "Suggest validation rules for a domain"
+                "path": "/api/aips/rule/suggest",
+                "description": "Suggest validation rules for a domain with agent insights by default"
             },
             "create_domain": {
                 "method": "POST",
@@ -243,6 +247,21 @@ def service_info():
 app.include_router(domain_schema_router)
 app.include_router(rule_suggestion_router)
 app.include_router(vector_router)
+app.include_router(agent_insights_router)
+
+# Mount static files for the dashboard
+static_path = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(static_path):
+    app.mount("/static", StaticFiles(directory=static_path), name="static")
+
+@app.get("/dashboard")
+async def agent_dashboard():
+    """Serve the enhanced agent insights dashboard"""
+    dashboard_path = os.path.join(static_path, "agent_dashboard.html")
+    if os.path.exists(dashboard_path):
+        return FileResponse(dashboard_path)
+    else:
+        raise HTTPException(status_code=404, detail="Dashboard not found")
 
 # Include validation router if available
 if VALIDATION_AVAILABLE:
