@@ -2,6 +2,7 @@ from langchain.agents import tool
 from langchain_community.chat_models import ChatOpenAI
 from app.core.config import settings
 from app.core.aws_secrets_service import require_openai_api_key
+from app.core.prompt_config import get_enhanced_rule_prompt, get_enhanced_column_prompt
 import json, re, requests
 import logging
 import os
@@ -46,39 +47,15 @@ def _get_default_rules() -> list:
 
 @tool
 def suggest_column_rules(data_schema: dict, gx_rules: list) -> str:
-    """Use LLM to suggest GX rules per column."""
+    """Use LLM to suggest GX rules per column with expertise and reasoning."""
     
     openai_key = require_openai_api_key()
     llm = ChatOpenAI(model=settings.rules_llm_model, openai_api_key=openai_key, temperature=settings.llm_temperature)
     
-    prompt = f"""
-    You are a data governance expert. Given this schema:
-    {json.dumps(data_schema, indent=2)}
-
-    And these available GX rules:
-    {json.dumps(gx_rules, indent=2)}
-
-    Suggest the best validation rule(s) for each column.
-
-    ⚠️ Important:
-    - Return ONLY a valid JSON array.
-    - Do NOT include markdown, explanation, or extra formatting.
-    - Do NOT wrap the output in ```json or any other code block.
-    - Do NOT include comments or trailing commas.
-
-    Example format:
-    [
-    {{
-        "column": "Email",
-        "expectations": [
-        {{
-            "expectation_type": "expect_column_values_to_match_regex",
-            "kwargs": {{ "regex": "^[\\w\\.-]+@[\\w\\.-]+\\.\\w+$" }}
-        }}
-        ]
-    }}
-    ]
-    """
+    domain = data_schema.get('domain', 'unknown')
+    
+    # Use enhanced prompt from configuration system
+    prompt = get_enhanced_rule_prompt(domain, data_schema, gx_rules)
 
     logger.info("LLM Prompt:\n%s", prompt)
     response = llm.invoke(prompt)
@@ -88,26 +65,13 @@ def suggest_column_rules(data_schema: dict, gx_rules: list) -> str:
 
 @tool
 def suggest_column_names_only(domain: str) -> list:
-    """Use LLM to suggest CSV column names only (no data types) for a domain not found in vector DB."""
+    """Use LLM to suggest CSV column names with business intelligence expertise."""
     
     openai_key = require_openai_api_key()
     llm = ChatOpenAI(model=settings.rules_llm_model, openai_api_key=openai_key, temperature=settings.llm_temperature)
 
-    prompt = f"""
-    You are a data architect helping suggest CSV column names for a new domain called '{domain}'.
-    
-    Suggest 5-11 plausible CSV column names that would be commonly found in this domain.
-    Focus on the most essential and representative columns for this domain.
-    
-    ⚠️ Important:
-    - Return ONLY a JSON array of column names (strings).
-    - Do NOT include data types, sample values, or any other metadata.
-    - Do NOT include markdown, explanation, or extra formatting.
-    - Do NOT wrap the output in ```json or any other code block.
-    
-    Example format:
-    ["column1", "column2", "column3"]
-    """
+    # Use enhanced prompt from configuration system  
+    prompt = get_enhanced_column_prompt(domain)
 
     logger.info("LLM Prompt for column names:\n%s", prompt)
     response = llm.invoke(prompt)

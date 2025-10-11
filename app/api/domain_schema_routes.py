@@ -833,16 +833,32 @@ async def extend_domain(request: Request):
             # Update exclude list to include user-provided columns
             all_existing_columns = existing_column_names + user_columns_added
             
-            # Create extension prompt
+            # Create enhanced extension prompt with business intelligence focus
             extension_description = f"""
-            Extend the existing domain '{domain_name}' with {suggested_columns_count} new columns.
+            You are a Data Integration Specialist with expertise in schema evolution and domain expansion.
             
-            Existing columns: {', '.join(existing_column_names)}
-            User-provided columns: {', '.join(user_columns_added) if user_columns_added else 'None'}
+            **CURRENT DOMAIN:** {domain_name}
+            **EXISTING SCHEMA COLUMNS:** {', '.join(existing_column_names)}
+            **USER-PROVIDED COLUMNS:** {', '.join(user_columns_added) if user_columns_added else 'None'}
+            **FOCUS AREA:** {focus_area if focus_area else 'General business enhancement'}
             
-            Focus area: {focus_area if focus_area else 'General business enhancement'}
+            **EXTENSION ANALYSIS:**
             
-            Generate columns that complement the existing schema without duplication.
+            **Gap Analysis:** Identify missing critical business dimensions, regulatory compliance gaps, operational metrics, and integration opportunities.
+            
+            **Pattern Consistency:** Maintain naming conventions and data type patterns from existing schema while ensuring new columns complement existing ones.
+            
+            **Business Value Assessment:** Consider adding columns for enhanced analytics, improved insights, regulatory compliance, operational efficiency, and downstream system integration.
+            
+            **EXTENSION CATEGORIES:**
+            - Temporal Enhancements: Additional date/time tracking fields
+            - Behavioral Data: User interaction patterns, preferences, activity metrics  
+            - Metadata Fields: Data lineage, quality scores, confidence levels
+            - Relationship Fields: Foreign keys to other business domains
+            - Computed Fields: Derived metrics and KPIs
+            
+            Generate {suggested_columns_count} additional columns that meaningfully extend the existing schema without duplication.
+            Focus on business-critical fields that would provide operational value and analytical insights.
             """
             
             # Generate extension suggestions
