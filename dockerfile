@@ -12,6 +12,11 @@ WORKDIR /app
 COPY requirements.txt .
 COPY . .
 
+# Copy your self-signed certificate into the container
+COPY devplify.crt /usr/local/share/ca-certificates/devplify.crt
+RUN update-ca-certificates \
+    && cat /usr/local/share/ca-certificates/devplify.crt >> $(python3 -m certifi)
+
 # Install system dependencies (build tools + lib for numpy/pandas/etc.)
 RUN apt-get update && apt-get install -y \
     libffi-dev \
