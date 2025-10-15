@@ -54,6 +54,11 @@ spec:
                 configMapKeyRef:
                   name: my-configmap
                   key: AOSS_URL
+            - name: AUDIT_SQS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: my-configmap
+                  key: AUDIT_SQS_URL
           resources:
            requests:
              cpu: "50m"
