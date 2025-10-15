@@ -1,16 +1,30 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+import os
 from app.api.domain_schema_routes import router as domain_schema_router
 from app.api.rule_suggestion_routes import router as rule_suggestion_router
-from app.api.routes import router as vector_router
-from app.core.exceptions import (
+from app.api.aoss_routes import router as vector_router
+from app.api.agent_insights_routes import router as agent_insights_router
+from app.exception.exceptions import (
     authentication_exception_handler,
     general_exception_handler,
     validation_exception_handler,
     internal_server_error_handler
 )
+from app.aws.audit_middleware import add_audit_middleware
+from app.aws.audit_service import audit_system_health
 import time, logging
+
+# Import validation router
+try:
+    from app.api.validator_routes import validation_router
+    VALIDATION_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"Validation router not available: {e}")
+    VALIDATION_AVAILABLE = False
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -34,6 +48,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add audit logging middleware - captures ALL API transactions
+add_audit_middleware(
+    app, 
+    excluded_paths=[
+        "/health", "/metrics", "/docs", "/openapi.json", "/favicon.ico", 
+        "/api/aips/health", "/api/aips/info", "/static", "/dashboard"
+    ],  # Only exclude system monitoring endpoints
+    log_request_body=True,  # Capture request bodies for complete transaction tracking
+    log_response_body=False,  # Keep response logging disabled for performance
+    max_body_size=10000  # Increase size limit for better transaction details
+)
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start = time.time()
@@ -44,8 +70,8 @@ async def log_requests(request: Request, call_next):
 
 @app.get("/api/aips/health")
 def health():
-    """Enhanced health check with AWS connection status"""
-    from app.api.routes import get_store
+    """Enhanced health check with AWS connection status and audit system"""
+    from app.api.aoss_routes import get_store
     
     health_status = {
         "service_name": "EDGP AI Policy Suggest Microservice",
@@ -54,7 +80,9 @@ def health():
         "timestamp": time.time(),
         "services": {
             "fastapi": "healthy",
-            "opensearch": "unknown"
+            "opensearch": "unknown",
+            "validation": "unknown",
+            "audit_system": "unknown"
         }
     }
     
@@ -76,17 +104,52 @@ def health():
         health_status["services"]["opensearch"] = "error"
         health_status["opensearch_error"] = str(e)[:100]
     
+    # Test validation system
+    if VALIDATION_AVAILABLE:
+        try:
+            from app.validation.llm_validator import LLMResponseValidator
+            validator = LLMResponseValidator()
+            health_status["services"]["validation"] = "healthy"
+        except Exception as e:
+            health_status["services"]["validation"] = "error"
+            health_status["validation_error"] = str(e)[:100]
+    else:
+        health_status["services"]["validation"] = "unavailable"
+        health_status["validation_message"] = "Validation system not installed"
+    
+    # Test audit system
+    try:
+        audit_health = audit_system_health()
+        if audit_health["sqs_configured"] and audit_health["sqs_client_initialized"]:
+            if audit_health["connection_test"]:
+                health_status["services"]["audit_system"] = "healthy"
+            else:
+                health_status["services"]["audit_system"] = "degraded"
+                health_status["audit_message"] = "SQS connection test failed"
+        else:
+            health_status["services"]["audit_system"] = "unavailable"
+            health_status["audit_message"] = "SQS not configured - audit logs will be written locally"
+        health_status["audit_details"] = audit_health
+    except Exception as e:
+        health_status["services"]["audit_system"] = "error"
+        health_status["audit_error"] = str(e)[:100]
+    
     # Overall status
-    if health_status["services"]["opensearch"] != "healthy":
+    unhealthy_services = [
+        service for service, status in health_status["services"].items() 
+        if status not in ["healthy", "unknown"]
+    ]
+    
+    if unhealthy_services:
         health_status["status"] = "degraded"
-        health_status["message"] = "Some services are unavailable"
+        health_status["message"] = f"Some services are unavailable: {', '.join(unhealthy_services)}"
     
     return health_status
 
 @app.get("/api/aips/info")
 def service_info():
     """Service information endpoint"""
-    from app.api.routes import get_store
+    from app.api.aoss_routes import get_store
     info = {
         "service_name": "EDGP AI Policy Suggest Microservice",
         "version": "1.0",
@@ -95,7 +158,7 @@ def service_info():
             "health": {
                 "method": "GET",
                 "path": "/api/aips/health",
-                "description": "Health check with OpenSearch status"
+                "description": "Health check with OpenSearch and audit system status"
             },
             "info": {
                 "method": "GET",
@@ -104,27 +167,27 @@ def service_info():
             },
             "suggest_rules": {
                 "method": "POST",
-                "path": "/api/aips/suggest-rules",
-                "description": "Suggest validation rules for a domain"
+                "path": "/api/aips/rules/suggest",
+                "description": "Suggest validation rules for a domain with agent insights by default"
             },
             "create_domain": {
                 "method": "POST",
-                "path": "/api/aips/domain/create",
+                "path": "/api/aips/domains/create",
                 "description": "Create a new domain with columns"
             },
             "extend_domain": {
                 "method": "PUT",
-                "path": "/api/aips/domain/extend-schema",
+                "path": "/api/aips/domains/extend-schema",
                 "description": "Extend an existing domain with new columns"
             },
             "suggest_extend_schema": {
                 "method": "POST",
-                "path": "/api/aips/domain/suggest-extend-schema/{domain_name}",
+                "path": "/api/aips/domains/suggest-extend-schema/{domain_name}",
                 "description": "Suggest additional columns for an existing domain"
             },
             "suggest_schema": {
                 "method": "POST",
-                "path": "/api/aips/domain/suggest-schema",
+                "path": "/api/aips/domains/suggest-schema",
                 "description": "AI-powered domain schema suggestions"
             },
             "vector_status": {
@@ -139,13 +202,47 @@ def service_info():
             },
             "domain_details": {
                 "method": "GET",
-                "path": "/api/aips/domain/{domain_name}",
+                "path": "/api/aips/domains/{domain_name}",
                 "description": "Get details for a specific domain"
             }
         },
         "repository": "edgp-ai-policy-suggest",
         "branch": "task/llm-validation"
     }
+    
+    # Add validation endpoints if available
+    if VALIDATION_AVAILABLE:
+        info["endpoints"].update({
+            "validation_metrics": {
+                "method": "GET",
+                "path": "/api/aips/validation/metrics",
+                "description": "Get LLM validation metrics and statistics"
+            },
+            "validate_schema": {
+                "method": "POST",
+                "path": "/api/aips/validation/validate-schema",
+                "description": "Validate an LLM-generated schema response"
+            },
+            "validate_rules": {
+                "method": "POST",
+                "path": "/api/aips/validation/validate-rules",
+                "description": "Validate LLM-generated rules"
+            },
+            "validation_health": {
+                "method": "GET",
+                "path": "/api/aips/validation/health",
+                "description": "Health check for validation system"
+            },
+            "validation_test": {
+                "method": "POST",
+                "path": "/api/aips/validation/test",
+                "description": "Test endpoint for validation system"
+            }
+        })
+        info["validation_system"] = "enabled"
+    else:
+        info["validation_system"] = "disabled"
+    
     # Live vector DB status
     try:
         store = get_store()
@@ -182,6 +279,28 @@ def service_info():
 app.include_router(domain_schema_router)
 app.include_router(rule_suggestion_router)
 app.include_router(vector_router)
+app.include_router(agent_insights_router)
+
+# Mount static files for the dashboard
+static_path = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(static_path):
+    app.mount("/static", StaticFiles(directory=static_path), name="static")
+
+@app.get("/dashboard")
+async def agent_dashboard():
+    """Serve the enhanced agent insights dashboard"""
+    dashboard_path = os.path.join(static_path, "agent_dashboard.html")
+    if os.path.exists(dashboard_path):
+        return FileResponse(dashboard_path)
+    else:
+        raise HTTPException(status_code=404, detail="Dashboard not found")
+
+# Include validation router if available
+if VALIDATION_AVAILABLE:
+    app.include_router(validation_router, prefix="/api/aips")
+    logging.info("Validation router successfully included with prefix /api/aips")
+else:
+    logging.warning("Validation router not included - validation module unavailable")
 
 if __name__ == "__main__":
     import uvicorn

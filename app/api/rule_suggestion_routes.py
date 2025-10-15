@@ -8,13 +8,96 @@ import logging
 import traceback
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(prefix="/api/aips/rules", tags=["rule-suggestions"])
 
 
-@router.post("/api/aips/suggest-rules")
+def _calculate_overall_confidence(state) -> float:
+    """Calculate overall confidence score based on various factors"""
+    factors = []
+    
+    # Factor 1: Error rate (fewer errors = higher confidence)
+    error_rate = len(state.errors) / max(len(state.step_history), 1)
+    error_confidence = max(0, 1.0 - error_rate)
+    factors.append(error_confidence)
+    
+    # Factor 2: Execution completeness
+    if state.execution_metrics:
+        total_time = state.execution_metrics.get("total_execution_time", 0)
+        if total_time > 0:
+            # Reasonable execution time suggests good processing
+            time_confidence = min(1.0, max(0.5, 1.0 - (total_time - 3.0) / 10.0))
+            factors.append(time_confidence)
+    
+    # Factor 3: Rule generation success
+    rule_count = len(state.rule_suggestions or [])
+    if rule_count > 0:
+        # More rules generated typically indicates better analysis
+        rule_confidence = min(1.0, 0.6 + (rule_count / 20.0))
+        factors.append(rule_confidence)
+    
+    # Factor 4: Schema complexity handling
+    if state.data_schema:
+        column_count = len(state.data_schema) - 1  # Subtract 'domain' key
+        if column_count > 0:
+            # Confidence decreases slightly with complexity but not dramatically
+            complexity_confidence = max(0.7, 1.0 - (column_count - 5) / 20.0)
+            factors.append(complexity_confidence)
+    
+    # Return average of all factors, defaulting to 0.5 if no factors
+    return sum(factors) / len(factors) if factors else 0.5
+
+
+def _get_confidence_level(state) -> str:
+    """Get human-readable confidence level"""
+    overall = _calculate_overall_confidence(state)
+    
+    if overall >= 0.8:
+        return "high"
+    elif overall >= 0.6:
+        return "medium"
+    elif overall >= 0.4:
+        return "low"
+    else:
+        return "very_low"
+
+
+def _get_confidence_factors(state) -> dict:
+    """Get detailed breakdown of confidence factors"""
+    rule_count = len(state.rule_suggestions or [])
+    error_count = len(state.errors)
+    execution_time = state.execution_metrics.get("total_execution_time", 0) if state.execution_metrics else 0
+    
+    return {
+        "rule_generation": {
+            "rules_generated": rule_count,
+            "score": min(1.0, 0.6 + (rule_count / 20.0)) if rule_count > 0 else 0.0,
+            "status": "good" if rule_count >= 5 else "needs_review" if rule_count > 0 else "failed"
+        },
+        "error_handling": {
+            "errors_encountered": error_count,
+            "score": max(0, 1.0 - error_count / max(len(state.step_history), 1)),
+            "status": "good" if error_count == 0 else "issues" if error_count < 3 else "problematic"
+        },
+        "execution_performance": {
+            "duration_seconds": round(execution_time, 2),
+            "score": min(1.0, max(0.5, 1.0 - (execution_time - 3.0) / 10.0)) if execution_time > 0 else 0.5,
+            "status": "fast" if execution_time < 3 else "normal" if execution_time < 8 else "slow"
+        },
+        "reasoning_depth": {
+            "thoughts_generated": len(state.thoughts),
+            "observations_made": len(state.observations),
+            "reflections_completed": len(state.reflections),
+            "score": min(1.0, (len(state.thoughts) + len(state.observations) + len(state.reflections)) / 15.0),
+            "status": "thorough" if len(state.thoughts) >= 5 else "adequate" if len(state.thoughts) >= 2 else "minimal"
+        }
+    }
+
+
+@router.post("/suggest")
 async def suggest_rules(
     domain: str = Body(..., embed=True),
-    user: UserInfo = Depends(verify_any_scope_token)
+    user: UserInfo = Depends(verify_any_scope_token),
+    include_insights: bool = Body(True, embed=True)  # Optional parameter for insights (default: True)
 ):
     try:
         # Log authenticated user information
@@ -61,8 +144,40 @@ async def suggest_rules(
 
         if schema:
             logger.info(f"Successfully retrieved schema for domain {domain}, generating rules")
-            rule_suggestions = run_agent(schema)
-            return { "rule_suggestions": rule_suggestions }
+            
+            if include_insights:
+                # Use enhanced agent with full insights
+                from app.agents.agent_runner import AgentState, build_graph
+                initial_state = AgentState(data_schema=schema)
+                graph = build_graph()
+                result = graph.invoke(initial_state)
+                
+                if isinstance(result, dict):
+                    state = AgentState(**result)
+                else:
+                    state = result
+                    
+                return { 
+                    "rule_suggestions": state.rule_suggestions or [],
+                    "confidence": {
+                        "overall": _calculate_overall_confidence(state),
+                        "level": _get_confidence_level(state),
+                        "factors": _get_confidence_factors(state)
+                    },
+                    "agent_insights": {
+                        "reasoning_steps": len(state.thoughts),
+                        "observations": len(state.observations),
+                        "reflections": len(state.reflections),
+                        "execution_time": state.execution_metrics.get("total_execution_time", 0),
+                        "detailed_confidence_scores": state.confidence_scores,  # For debugging
+                        "key_thoughts": state.thoughts[-3:] if state.thoughts else [],  # Last 3 thoughts
+                        "final_reflection": state.reflections[-1] if state.reflections else None
+                    }
+                }
+            else:
+                # Standard agent execution (backwards compatible)
+                rule_suggestions = run_agent(schema)
+                return { "rule_suggestions": rule_suggestions }
 
         # Handle different scenarios when no schema is found
         if vector_db_status == "connection_failed":
@@ -124,7 +239,7 @@ async def suggest_rules(
                     "after_creation": [
                         "Schema will be saved to vector database",
                         "Optional: Download sample CSV data",
-                        "Call /api/aips/suggest-rules again to get validation rules"
+                        "Call /api/aips/rules/suggest again to get validation rules"
                     ]
                 }
             }, status_code=404)

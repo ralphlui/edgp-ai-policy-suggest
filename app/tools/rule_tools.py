@@ -1,7 +1,11 @@
 from langchain.agents import tool
 from langchain_community.chat_models import ChatOpenAI
 from app.core.config import settings
-from app.core.aws_secrets_service import require_openai_api_key
+from app.aws.aws_secrets_service import require_openai_api_key
+from app.prompt.prompt_config import get_enhanced_rule_prompt, get_enhanced_column_prompt
+from app.validation.middleware import AgentValidationContext, validate_input_quick, validate_output_quick
+from app.validation.policy_validator import create_policy_validator, create_policy_sanitizer
+from app.exception.exceptions import ValidationError
 import json, re, requests
 import logging
 import os
@@ -46,73 +50,129 @@ def _get_default_rules() -> list:
 
 @tool
 def suggest_column_rules(data_schema: dict, gx_rules: list) -> str:
-    """Use LLM to suggest GX rules per column."""
+    """Use LLM to suggest GX rules per column with expertise and reasoning. Includes validation and safety checks."""
     
     openai_key = require_openai_api_key()
     llm = ChatOpenAI(model=settings.rules_llm_model, openai_api_key=openai_key, temperature=settings.llm_temperature)
     
-    prompt = f"""
-    You are a data governance expert. Given this schema:
-    {json.dumps(data_schema, indent=2)}
+    domain = data_schema.get('domain', 'unknown')
+    
+    # Use enhanced prompt from configuration system
+    prompt = get_enhanced_rule_prompt(domain, data_schema, gx_rules)
 
-    And these available GX rules:
-    {json.dumps(gx_rules, indent=2)}
+    # Get validation config and create user context
+    validation_config = None
+    if settings.llm_validation_enabled:
+        validation_config = settings.get_llm_validation_config()
+    
+    # Create a unique user ID for this request (in real app, this would come from authentication)
+    user_id = f"agent_{domain}_{hash(str(data_schema)) % 10000}"
+    
+    try:
+        # Validate input if validation is enabled
+        if validation_config:
+            logger.info(" Validating LLM input for safety and compliance")
+            sanitized_prompt = validate_input_quick(prompt, user_id)
+            logger.info(" Input validation passed")
+        else:
+            sanitized_prompt = prompt
+            logger.info(" LLM validation disabled - proceeding without safety checks")
 
-    Suggest the best validation rule(s) for each column.
-
-    ⚠️ Important:
-    - Return ONLY a valid JSON array.
-    - Do NOT include markdown, explanation, or extra formatting.
-    - Do NOT wrap the output in ```json or any other code block.
-    - Do NOT include comments or trailing commas.
-
-    Example format:
-    [
-    {{
-        "column": "Email",
-        "expectations": [
-        {{
-            "expectation_type": "expect_column_values_to_match_regex",
-            "kwargs": {{ "regex": "^[\\w\\.-]+@[\\w\\.-]+\\.\\w+$" }}
-        }}
-        ]
-    }}
-    ]
-    """
-
-    logger.info("LLM Prompt:\n%s", prompt)
-    response = llm.invoke(prompt)
-    logger.info("Raw LLM output:\n%s", response.content)
-    return response.content.strip()
+        logger.info("LLM Prompt:\n%s", sanitized_prompt)
+        
+        # Make LLM call
+        response = llm.invoke(sanitized_prompt)
+        raw_response = response.content.strip()
+        
+        logger.info("Raw LLM output:\n%s", raw_response)
+        
+        # Validate output if validation is enabled
+        if validation_config:
+            logger.info(" Validating LLM output for safety and quality")
+            validated_response = validate_output_quick(raw_response, "content")
+            logger.info(" Output validation passed")
+            return validated_response
+        else:
+            logger.info(" LLM validation disabled - returning raw output")
+            return raw_response
+            
+    except ValidationError as e:
+        logger.error(f" LLM validation failed: {e}")
+        # Return a safe fallback response
+        return json.dumps({
+            "error": "Validation failed - using safe fallback",
+            "message": "The request could not be processed due to safety restrictions",
+            "fallback_rules": [
+                {
+                    "column": col,
+                    "expectations": [{"expectation": "expect_column_values_to_not_be_null"}]
+                } for col in data_schema.keys() if col != "domain"
+            ]
+        })
+    except Exception as e:
+        logger.error(f" Unexpected error in LLM call: {e}")
+        raise
 
 
 @tool
 def suggest_column_names_only(domain: str) -> list:
-    """Use LLM to suggest CSV column names only (no data types) for a domain not found in vector DB."""
+    """Use LLM to suggest CSV column names with business intelligence expertise. Includes validation and safety checks."""
     
     openai_key = require_openai_api_key()
     llm = ChatOpenAI(model=settings.rules_llm_model, openai_api_key=openai_key, temperature=settings.llm_temperature)
 
-    prompt = f"""
-    You are a data architect helping suggest CSV column names for a new domain called '{domain}'.
-    
-    Suggest 5-11 plausible CSV column names that would be commonly found in this domain.
-    Focus on the most essential and representative columns for this domain.
-    
-    ⚠️ Important:
-    - Return ONLY a JSON array of column names (strings).
-    - Do NOT include data types, sample values, or any other metadata.
-    - Do NOT include markdown, explanation, or extra formatting.
-    - Do NOT wrap the output in ```json or any other code block.
-    
-    Example format:
-    ["column1", "column2", "column3"]
-    """
+    # Use enhanced prompt from configuration system  
+    prompt = get_enhanced_column_prompt(domain)
 
-    logger.info("LLM Prompt for column names:\n%s", prompt)
-    response = llm.invoke(prompt)
-    logger.info("Raw LLM column names output:\n%s", response.content)
-    return response.content.strip()
+    # Get validation config
+    validation_config = None
+    if settings.llm_validation_enabled:
+        validation_config = settings.get_llm_validation_config()
+    
+    # Create a unique user ID for this request
+    user_id = f"agent_columns_{domain}_{hash(domain) % 10000}"
+    
+    try:
+        # Validate input if validation is enabled
+        if validation_config:
+            logger.info(" Validating column suggestion input")
+            sanitized_prompt = validate_input_quick(prompt, user_id)
+            logger.info(" Input validation passed")
+        else:
+            sanitized_prompt = prompt
+            logger.info(" LLM validation disabled")
+
+        logger.info("LLM Prompt for column names:\n%s", sanitized_prompt)
+        
+        # Make LLM call
+        response = llm.invoke(sanitized_prompt)
+        raw_response = response.content.strip()
+        
+        logger.info("Raw LLM column names output:\n%s", raw_response)
+        
+        # Validate output if validation is enabled
+        if validation_config:
+            logger.info(" Validating column suggestion output")
+            validated_response = validate_output_quick(raw_response, "content")
+            logger.info(" Output validation passed")
+            return validated_response
+        else:
+            logger.info(" LLM validation disabled")
+            return raw_response
+            
+    except ValidationError as e:
+        logger.error(f" Column suggestion validation failed: {e}")
+        # Return safe fallback column names
+        return json.dumps([
+            f"{domain}_id",
+            f"{domain}_name", 
+            f"{domain}_description",
+            "created_date",
+            "updated_date"
+        ])
+    except Exception as e:
+        logger.error(f" Unexpected error in column suggestion: {e}")
+        raise
 
 
 @tool
@@ -127,10 +187,10 @@ def format_gx_rules(raw_text: str) -> list:
     # Try direct JSON parsing first
     try:
         parsed = json.loads(raw_text)
-        logger.info("✅ Successfully parsed JSON directly")
+        logger.info(" Successfully parsed JSON directly")
         return parsed if isinstance(parsed, list) else [parsed]
     except json.JSONDecodeError as e:
-        logger.warning("⚠️ Direct JSON parse failed: %s", e)
+        logger.warning(" Direct JSON parse failed: %s", e)
 
     # Fix regex escape issues comprehensively
     try:
@@ -147,10 +207,10 @@ def format_gx_rules(raw_text: str) -> list:
         
         cleaned_text = fix_regex_patterns(raw_text)
         parsed = json.loads(cleaned_text)
-        logger.info("✅ Successfully parsed JSON after fixing regex patterns")
+        logger.info(" Successfully parsed JSON after fixing regex patterns")
         return parsed if isinstance(parsed, list) else [parsed]
     except json.JSONDecodeError as e:
-        logger.warning("⚠️ JSON parse failed after regex fixing: %s", e)
+        logger.warning(" JSON parse failed after regex fixing: %s", e)
 
     # Final fallback: extract individual column objects manually
     try:
@@ -173,20 +233,20 @@ def format_gx_rules(raw_text: str) -> list:
                 # Verify it's a proper column object
                 if isinstance(obj, dict) and "column" in obj:
                     parsed_objects.append(obj)
-                    logger.info(f"✅ Parsed object {i+1}: {obj.get('column')}")
+                    logger.info(f" Parsed object {i+1}: {obj.get('column')}")
                     
             except json.JSONDecodeError as e:
-                logger.warning(f"⚠️ Failed to parse object {i+1}: {e}")
+                logger.warning(f" Failed to parse object {i+1}: {e}")
         
         if parsed_objects:
-            logger.info(f"✅ Successfully extracted {len(parsed_objects)} column objects")
+            logger.info(f" Successfully extracted {len(parsed_objects)} column objects")
             return parsed_objects
         else:
-            logger.error("❌ No valid column objects found")
+            logger.error(" No valid column objects found")
             return [{"error": "No valid rules parsed", "raw": raw_text}]
             
     except Exception as e:
-        logger.error(f"❌ Fallback parsing failed: {e}")
+        logger.error(f" Fallback parsing failed: {e}")
         return [{"error": f"Could not parse rules: {e}", "raw": raw_text}]
 
 @tool
@@ -200,7 +260,7 @@ def normalize_rule_suggestions(rule_input: dict) -> dict:
 
     raw = rule_input.get("raw", [])
     if not isinstance(raw, list):
-        logger.warning("⚠️ Expected list under 'raw', got: %s", type(raw))
+        logger.warning(" Expected list under 'raw', got: %s", type(raw))
         return {"error": "Invalid input type", "raw": raw}
 
     logger.info(f"🔍 Normalizing {len(raw)} raw rule objects")
@@ -209,23 +269,23 @@ def normalize_rule_suggestions(rule_input: dict) -> dict:
     for i, item in enumerate(raw):
         try:
             # Debug logging
-            logger.info(f"🔍 Processing item {i+1}: {type(item)} - {item}")
+            logger.info(f" Processing item {i+1}: {type(item)} - {item}")
             
             if not isinstance(item, dict):
-                logger.warning(f"⚠️ Item {i+1} is not a dict: {type(item)}")
+                logger.warning(f" Item {i+1} is not a dict: {type(item)}")
                 continue
                 
             if "column" not in item:
-                logger.warning(f"⚠️ Item {i+1} missing 'column' key. Keys: {list(item.keys())}")
+                logger.warning(f" Item {i+1} missing 'column' key. Keys: {list(item.keys())}")
                 continue
                 
             column = item["column"]
             expectations = item.get("expectations", [])
             result[column] = {"expectations": expectations}
-            logger.info(f"✅ Successfully processed column '{column}' with {len(expectations)} expectations")
+            logger.info(f" Successfully processed column '{column}' with {len(expectations)} expectations")
             
         except Exception as e:
-            logger.warning("⚠️ Exception processing item %d: %s", i+1, e)
+            logger.warning(" Exception processing item %d: %s", i+1, e)
 
     logger.info(f"🎯 Normalization complete: {len(result)} columns processed")
     return result

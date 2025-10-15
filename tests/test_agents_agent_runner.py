@@ -66,8 +66,9 @@ class TestAgentRunnerModule:
         
         from app.agents.agent_runner import run_agent
         
-        with pytest.raises(Exception):
-            run_agent({"col1": {"type": "string"}})
+        # The function now catches exceptions and returns an empty list
+        result = run_agent({"col1": {"type": "string"}})
+        assert result == []
 
     @patch('app.agents.agent_runner.build_graph')
     def test_run_agent_complex_query(self, mock_build_graph):
@@ -78,6 +79,11 @@ class TestAgentRunnerModule:
             {"rule": "test1", "column": "col1"},
             {"rule": "test2", "column": "col2"}
         ]
+        mock_result.thoughts = ["thought1", "thought2"]
+        mock_result.observations = ["obs1", "obs2"]
+        mock_result.reflections = ["reflection1"]
+        mock_result.execution_metrics = {"total_execution_time": 1.5}
+        mock_result.step_history = ["step1", "step2"]
         mock_graph = Mock()
         mock_graph.invoke.return_value = mock_result
         mock_build_graph.return_value = mock_graph

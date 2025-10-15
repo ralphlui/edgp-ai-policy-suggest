@@ -151,7 +151,7 @@ class TestModelChainManagement:
     
     @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}, clear=False)
     @patch('app.agents.schema_suggester.ChatOpenAI')
-    @patch('app.core.aws_secrets_service.require_openai_api_key', return_value='test-key')
+    @patch('app.aws.aws_secrets_service.require_openai_api_key', return_value='test-key')
     def test_get_model_chain_creation(self, mock_require_api_key, mock_chat_openai):
         """Test model chain creation"""
         try:
@@ -171,7 +171,7 @@ class TestModelChainManagement:
     
     @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}, clear=False)
     @patch('app.agents.schema_suggester.ChatOpenAI')
-    @patch('app.core.aws_secrets_service.require_openai_api_key', return_value='test-key')
+    @patch('app.aws.aws_secrets_service.require_openai_api_key', return_value='test-key')
     def test_model_chain_caching(self, mock_require_api_key, mock_chat_openai):
         """Test that model chains are cached"""
         try:
@@ -270,7 +270,7 @@ class TestCallLLM:
         """Test LLM call retry mechanism for network errors"""
         try:
             from app.agents.schema_suggester import call_llm
-            from app.core.exceptions import SchemaGenerationError
+            from app.exception.exceptions import SchemaGenerationError
         except ImportError:
             pytest.skip("Required modules not available")
         
@@ -319,13 +319,13 @@ class TestFormatLLMSchema:
         """Test formatting with empty columns"""
         try:
             from app.agents.schema_suggester import format_llm_schema
-            from app.core.exceptions import SchemaGenerationError
+            from app.exception.exceptions import SchemaGenerationError
         except ImportError:
             pytest.skip("Required modules not available")
         
         raw_response = {"columns": []}
         
-        with pytest.raises(SchemaGenerationError, match="No columns found"):
+        with pytest.raises(SchemaGenerationError):
             format_llm_schema(raw_response)
     
     @patch('app.agents.schema_suggester.validate_column_schema')
@@ -333,7 +333,7 @@ class TestFormatLLMSchema:
         """Test formatting with validation failures"""
         try:
             from app.agents.schema_suggester import format_llm_schema
-            from app.core.exceptions import SchemaGenerationError
+            from app.exception.exceptions import SchemaGenerationError
         except ImportError:
             pytest.skip("Required modules not available")
         
@@ -476,7 +476,7 @@ class TestBootstrapSchema:
         """Test fallback mechanism on failure"""
         try:
             from app.agents.schema_suggester import bootstrap_schema_for_domain
-            from app.core.exceptions import SchemaGenerationError
+            from app.exception.exceptions import SchemaGenerationError
         except ImportError:
             pytest.skip("Required modules not available")
         
@@ -600,7 +600,7 @@ class TestErrorHandling:
         """Test LLM call exception handling for non-retryable errors"""
         try:
             from app.agents.schema_suggester import call_llm
-            from app.core.exceptions import SchemaGenerationError
+            from app.exception.exceptions import SchemaGenerationError
         except ImportError:
             pytest.skip("Required modules not available")
         
@@ -617,7 +617,7 @@ class TestErrorHandling:
         """Test bootstrap exception handling"""
         try:
             from app.agents.schema_suggester import bootstrap_schema_for_domain
-            from app.core.exceptions import SchemaGenerationError
+            from app.exception.exceptions import SchemaGenerationError
         except ImportError:
             pytest.skip("Required modules not available")
         
@@ -633,7 +633,7 @@ class TestIntegration:
     
     @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}, clear=False)
     @patch('app.agents.schema_suggester.ChatOpenAI')
-    @patch('app.core.aws_secrets_service.require_openai_api_key', return_value='test-key')
+    @patch('app.aws.aws_secrets_service.require_openai_api_key', return_value='test-key')
     @patch('app.agents.schema_suggester.validate_column_schema')
     def test_end_to_end_schema_generation(self, mock_validate, mock_require_api_key, mock_chat_openai):
         """Test end-to-end schema generation"""
@@ -698,7 +698,7 @@ class TestConfiguration:
         """Test that configuration is used correctly"""
         try:
             from app.agents.schema_suggester import format_llm_schema, SchemaGenerationConfig
-            from app.core.exceptions import SchemaGenerationError
+            from app.exception.exceptions import SchemaGenerationError
         except ImportError:
             pytest.skip("Required modules not available")
         

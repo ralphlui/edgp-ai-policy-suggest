@@ -39,14 +39,14 @@ from openai import AsyncOpenAI
 # App imports
 from app.vector_db.schema_loader import validate_column_schema
 from app.core.config import settings
-from app.core.aws_secrets_service import require_openai_api_key
-from app.core.exceptions import SchemaGenerationError
+from app.prompt.prompt_config import get_enhanced_schema_prompt
+from app.aws.aws_secrets_service import require_openai_api_key
+from app.exception.exceptions import SchemaGenerationError
+from app.validation.llm_validator import validate_llm_response, ValidationSeverity
+from app.validation.metrics import record_validation_metric
 
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# CONFIGURATION AND DATA MODELS
-# =============================================================================
 
 @dataclass
 class SchemaGenerationConfig:
@@ -144,22 +144,55 @@ Respond in JSON format:
             
             config = get_schema_generation_config()
             
-            # Enhanced prompt template with better instructions
+            # Enhanced prompt template with comprehensive business expertise
             prompt = ChatPromptTemplate.from_messages([
                 ("system", 
-                 "You are an expert data architect specializing in CSV schema design. "
-                 "You create realistic, production-ready column definitions for business domains. "
-                 "Focus on commonly used columns that would appear in real-world datasets."),
+                 "You are a Senior Data Architect and Enterprise Schema Designer with deep expertise in:\n\n"
+                 "- Business domain modeling across industries (Finance, Healthcare, Retail, Manufacturing)\n"
+                 "- Data warehouse and data lake design patterns\n" 
+                 "- Regulatory compliance requirements (GDPR, HIPAA, PCI-DSS)\n"
+                 "- Modern data governance frameworks\n"
+                 "- Real-world production data challenges\n\n"
+                 "**DESIGN PHILOSOPHY:**\n"
+                 "Create schemas that are business-aligned, compliance-ready, scalable, and rich in metadata for data discovery."),
                 ("human", 
-                 """Design a CSV schema for the domain: '{domain}'.
+                 """Design a comprehensive CSV schema for the domain: '{domain}'.
 
-Requirements:
-- Generate """ + f"{config.min_columns}-{config.max_columns}" + """ relevant columns
-- Each column must have a valid identifier name (no spaces, special chars)
+**COLUMN CATEGORIES TO INCLUDE:**
+1. **Identifiers:** Primary keys, foreign keys, business IDs
+2. **Temporal:** Created/updated timestamps, effective dates, expiry dates
+3. **Descriptive:** Names, descriptions, categories, statuses
+4. **Quantitative:** Amounts, counts, rates, percentages
+5. **Contact/Location:** Addresses, phone, email (with PII considerations)
+6. **Behavioral:** Flags, preferences, activity indicators
+
+**DOMAIN-SPECIFIC PATTERNS:**
+- **Customer:** customer_id, email, registration_date, status, lifetime_value, preferred_contact_method
+- **Financial:** account_number, transaction_amount, transaction_date, currency_code, account_status
+- **Product:** product_id, sku, category, price, inventory_count, supplier_id
+- **Healthcare:** patient_id, diagnosis_code, treatment_date, provider_id, insurance_coverage
+- **HR:** employee_id, department, hire_date, salary_band, performance_rating
+
+**REQUIREMENTS:**
+- Generate """ + f"{config.min_columns}-{config.max_columns}" + """ realistic columns following business patterns
+- Each column must have a valid identifier name using lowercase_with_underscores
 - Use data types: """ + f"{', '.join(config.supported_types)}" + """
-- Provide exactly """ + f"{config.min_samples}" + """ realistic sample values per column
-- Include common business fields (IDs, names, dates, status, etc.)
-- Ensure samples are diverse and realistic
+- Provide exactly """ + f"{config.min_samples}" + """ diverse, realistic sample values per column
+- Include essential business identifiers, temporal fields, and descriptive attributes
+- Consider regulatory compliance and PII classification needs
+
+**SAMPLE VALUE GUIDELINES:**
+- Use realistic, diverse data representing different business scenarios
+- Include edge cases and international formats where applicable
+- Ensure samples reflect real business patterns and temporal consistency
+- Consider data privacy requirements for PII fields
+
+**QUALITY STANDARDS:**
+Each column must have:
+- Clear, descriptive name following naming conventions
+- Appropriate data type for the business content
+- Realistic sample values that business users would recognize
+- Implicit consideration for validation rules and data governance
 
 {format_instructions}""")
             ])
@@ -274,7 +307,50 @@ def format_llm_schema(raw: Dict[str, Any], strict_validation: bool = True) -> Di
     """
     logger.info(f" Formatting LLM response with {len(raw.get('columns', []))} columns")
     
-    columns = raw.get("columns", [])
+    # Track validation timing for metrics
+    validation_start_time = time.time()
+    
+    # First, validate the entire response using the new validation system
+    validation_result = validate_llm_response(
+        response=raw, 
+        response_type="schema", 
+        strict_mode=strict_validation,
+        auto_correct=True
+    )
+    
+    # Record validation metrics
+    validation_time_ms = (time.time() - validation_start_time) * 1000
+    domain = raw.get("domain", "unknown")
+    try:
+        record_validation_metric(
+            domain=domain,
+            response_type="schema",
+            validation_result=validation_result,
+            validation_time_ms=validation_time_ms
+        )
+    except Exception as e:
+        logger.warning(f"Failed to record validation metrics: {e}")
+    
+    # Log validation results
+    if validation_result.issues:
+        logger.warning(f" Validation found {len(validation_result.issues)} issues:")
+        for issue in validation_result.issues:
+            logger.warning(f"   {issue.severity.value.upper()}: {issue.field} - {issue.message}")
+    
+    logger.info(f" Validation confidence score: {validation_result.confidence_score}")
+    
+    # Use corrected data if available and auto-correction was enabled
+    working_data = validation_result.corrected_data if validation_result.corrected_data else raw
+    
+    # Check if validation failed critically
+    if not validation_result.is_valid and strict_validation:
+        critical_issues = [issue for issue in validation_result.issues if issue.severity == ValidationSeverity.CRITICAL]
+        if critical_issues:
+            error_msg = f"Critical validation errors: {[issue.message for issue in critical_issues]}"
+            logger.error(f" {error_msg}")
+            raise SchemaGenerationError(error_msg)
+    
+    columns = working_data.get("columns", [])
     if not columns:
         raise SchemaGenerationError("No columns found in LLM response")
     
@@ -368,7 +444,7 @@ def bootstrap_schema_for_domain(
         raise ValueError("Domain cannot be empty")
     
     start_time = time.time()
-    logger.info(f"🚀 Bootstrapping schema for domain: '{domain}'")
+    logger.info(f" Bootstrapping schema for domain: '{domain}'")
     
     try:
         # Generate schema with LLM
@@ -403,9 +479,9 @@ def bootstrap_schema_for_domain(
         raise SchemaGenerationError(f"Failed to bootstrap schema for domain '{domain}': {e}")
 
 
-# =============================================================================
-# ENHANCED SCHEMA GENERATION WITH USER PREFERENCES
-# =============================================================================
+
+# SCHEMA GENERATION WITH USER PREFERENCES
+
 
 class SchemaSuggesterEnhanced:
     """Enhanced schema suggester with user preferences and iterative improvements."""
@@ -469,7 +545,7 @@ class SchemaSuggesterEnhanced:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an expert business analyst and database designer. Generate JSON schema suggestions that are practical, well-structured, and aligned with business needs."
+                        "content": "You are an expert business analyst and enterprise data strategist with deep domain knowledge across industries. Your expertise includes business process analysis, regulatory compliance requirements, and data governance frameworks. Generate JSON schema suggestions that are practical, business-aligned, compliance-ready, and optimized for real-world enterprise use cases. Focus on essential business entities, temporal dimensions, and operational metrics that drive business value."
                     },
                     {
                         "role": "user",
@@ -841,10 +917,6 @@ class SchemaSuggesterEnhanced:
                 "metadata": {"error": True}
             }
 
-
-# =============================================================================
-# UTILITY FUNCTIONS
-# =============================================================================
 
 def _validate_samples_for_type(samples: List[str], col_type: str) -> bool:
     """

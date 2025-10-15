@@ -190,7 +190,7 @@ class TestRuleToolsModule:
         assert "ExpectColumnValuesToMatchRegex" in result[0]["rule_name"]
 
     @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}, clear=False)
-    @patch('app.core.aws_secrets_service.require_openai_api_key', return_value='test-key')
+    @patch('app.aws.aws_secrets_service.require_openai_api_key', return_value='test-key')
     @patch('app.tools.rule_tools.ChatOpenAI')
     def test_suggest_column_rules_mock(self, mock_chat_openai, mock_require_api_key):
         """Test column rule suggestion with mocked OpenAI"""
@@ -211,7 +211,7 @@ class TestRuleToolsModule:
         mock_llm.invoke.assert_called_once()
 
     @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}, clear=False)
-    @patch('app.core.aws_secrets_service.require_openai_api_key', return_value='test-key')
+    @patch('app.aws.aws_secrets_service.require_openai_api_key', return_value='test-key')
     @patch('app.tools.rule_tools.ChatOpenAI')
     def test_suggest_column_names_only_mock(self, mock_chat_openai, mock_require_api_key):
         """Test column name suggestion with mocked OpenAI"""

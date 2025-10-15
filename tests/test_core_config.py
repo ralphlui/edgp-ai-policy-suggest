@@ -236,7 +236,7 @@ class TestAWSSecretsManagerIntegration:
     
     def test_aws_secrets_service_functions_exist(self):
         """Test that AWS secrets service functions exist and are callable"""
-        from app.core.aws_secrets_service import get_openai_api_key, get_jwt_public_key, require_openai_api_key
+        from app.aws.aws_secrets_service import get_openai_api_key, get_jwt_public_key, require_openai_api_key
         
         # These should be callable functions
         assert callable(get_openai_api_key)
@@ -245,7 +245,7 @@ class TestAWSSecretsManagerIntegration:
     
     def test_credential_manager_class_exists(self):
         """Test that CredentialManager class exists"""
-        from app.core.aws_secrets_service import CredentialManager
+        from app.aws.aws_secrets_service import CredentialManager
         
         # Should be able to create an instance
         manager = CredentialManager()
@@ -255,7 +255,7 @@ class TestAWSSecretsManagerIntegration:
     
     def test_module_level_functions_work(self):
         """Test that module-level functions work with test environment"""
-        from app.core.aws_secrets_service import get_openai_api_key, get_jwt_public_key
+        from app.aws.aws_secrets_service import get_openai_api_key, get_jwt_public_key
         
         # These should return something in test environment (even if mocked)
         api_key = get_openai_api_key()
@@ -271,9 +271,9 @@ class TestConfigurationInitialization:
     
     def test_config_logic_aws_success_path(self):
         """Test the logic path when AWS Secrets Manager succeeds"""
-        from app.core.aws_secrets_service import get_openai_api_key
+        from app.aws.aws_secrets_service import get_openai_api_key
         
-        with patch('app.core.aws_secrets_service._credential_manager') as mock_manager:
+        with patch('app.aws.aws_secrets_service._credential_manager') as mock_manager:
             mock_manager.get_openai_api_key.return_value = "test-aws-key"
             result = get_openai_api_key()
             assert result == "test-aws-key"
@@ -281,9 +281,9 @@ class TestConfigurationInitialization:
     @patch.dict(os.environ, {'OPENAI_API_KEY': 'fallback-key'}, clear=False)
     def test_config_logic_aws_failure_env_fallback(self):
         """Test the logic path when AWS fails and env fallback works"""
-        from app.core.aws_secrets_service import get_openai_api_key
+        from app.aws.aws_secrets_service import get_openai_api_key
         
-        with patch('app.core.aws_secrets_service._credential_manager') as mock_manager:
+        with patch('app.aws.aws_secrets_service._credential_manager') as mock_manager:
             mock_manager.get_openai_api_key.return_value = None
             result = get_openai_api_key()
             assert result is None
@@ -451,9 +451,9 @@ class TestErrorPathSimulation:
     
     def test_invalid_json_parsing_in_secrets(self):
         """Test invalid JSON handling in AWS secrets service"""
-        from app.core.aws_secrets_service import get_openai_api_key
+        from app.aws.aws_secrets_service import get_openai_api_key
         
-        with patch('app.core.aws_secrets_service._credential_manager') as mock_manager:
+        with patch('app.aws.aws_secrets_service._credential_manager') as mock_manager:
             # Mock response with invalid JSON treated as plain text
             mock_manager.get_openai_api_key.return_value = 'invalid-json-string'
             
