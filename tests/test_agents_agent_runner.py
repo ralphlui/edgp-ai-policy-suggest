@@ -79,6 +79,11 @@ class TestAgentRunnerModule:
             {"rule": "test1", "column": "col1"},
             {"rule": "test2", "column": "col2"}
         ]
+        mock_result.thoughts = ["thought1", "thought2"]
+        mock_result.observations = ["obs1", "obs2"]
+        mock_result.reflections = ["reflection1"]
+        mock_result.execution_metrics = {"total_execution_time": 1.5}
+        mock_result.step_history = ["step1", "step2"]
         mock_graph = Mock()
         mock_graph.invoke.return_value = mock_result
         mock_build_graph.return_value = mock_graph

@@ -3,7 +3,7 @@ from langchain_openai import OpenAIEmbeddings
 from tenacity import retry, stop_after_attempt, wait_exponential_jitter
 from langchain.schema import Document
 from app.core.config import settings
-from app.core.aws_secrets_service import require_openai_api_key
+from app.aws.aws_secrets_service import require_openai_api_key
 import asyncio
 
 _embedding_cache: dict[str, list[float]] = {}

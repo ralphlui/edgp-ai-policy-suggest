@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pydantic_settings import BaseSettings
 from pydantic import ConfigDict, field_validator, Field
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import os
 import json
 from dotenv import load_dotenv
@@ -120,6 +120,53 @@ class Settings(BaseSettings):
     schema_llm_model: str = Field(default=os.getenv("SCHEMA_LLM_MODEL", "gpt-4o-mini"), alias="SCHEMA_LLM_MODEL")
     rules_llm_model: str = Field(default=os.getenv("RULES_LLM_MODEL", "gpt-4o-mini"), alias="RULES_LLM_MODEL")
     llm_temperature: float = Field(default=float(os.getenv("LLM_TEMPERATURE", "0.3")), alias="LLM_TEMPERATURE")
+
+    # LLM Validation and Safety Configuration
+    llm_validation_enabled: bool = Field(default=os.getenv("LLM_VALIDATION_ENABLED", "true").lower() == "true", alias="LLM_VALIDATION_ENABLED")
+    llm_input_max_length: int = Field(default=int(os.getenv("LLM_INPUT_MAX_LENGTH", "10000")), alias="LLM_INPUT_MAX_LENGTH")
+    llm_output_max_length: int = Field(default=int(os.getenv("LLM_OUTPUT_MAX_LENGTH", "50000")), alias="LLM_OUTPUT_MAX_LENGTH")
+    llm_rate_limit_per_minute: int = Field(default=int(os.getenv("LLM_RATE_LIMIT_PER_MINUTE", "60")), alias="LLM_RATE_LIMIT_PER_MINUTE")
+    llm_rate_limit_per_hour: int = Field(default=int(os.getenv("LLM_RATE_LIMIT_PER_HOUR", "1000")), alias="LLM_RATE_LIMIT_PER_HOUR")
+    llm_strict_mode: bool = Field(default=os.getenv("LLM_STRICT_MODE", "true").lower() == "true", alias="LLM_STRICT_MODE")
+    llm_auto_correct: bool = Field(default=os.getenv("LLM_AUTO_CORRECT", "false").lower() == "true", alias="LLM_AUTO_CORRECT")
+    llm_advanced_safety: bool = Field(default=os.getenv("LLM_ADVANCED_SAFETY", "true").lower() == "true", alias="LLM_ADVANCED_SAFETY")
+    llm_safety_threshold: float = Field(default=float(os.getenv("LLM_SAFETY_THRESHOLD", "0.7")), alias="LLM_SAFETY_THRESHOLD")
+    
+    # Backward compatibility properties
+    @property
+    def llm_max_input_length(self) -> int:
+        """Backward compatibility for llm_max_input_length"""
+        return self.llm_input_max_length
+    
+    @property 
+    def validation_rate_limit_per_minute(self) -> int:
+        """Backward compatibility for validation_rate_limit_per_minute"""
+        return self.llm_rate_limit_per_minute
+    
+    @property
+    def validation_rate_limit_per_hour(self) -> int:
+        """Backward compatibility for validation_rate_limit_per_hour"""
+        return self.llm_rate_limit_per_hour
+    
+    @property
+    def validation_max_input_length(self) -> int:
+        """Backward compatibility for validation_max_input_length"""
+        return self.llm_input_max_length
+    
+    def get_llm_validation_config(self) -> Dict[str, Any]:
+        """Get LLM validation configuration with policy-aware defaults"""
+        return {
+            "enabled": self.llm_validation_enabled,
+            "strict_mode": False,  # More lenient for business context
+            "auto_correct": True,  # Enable auto-correction for better UX
+            "rate_limit_per_minute": self.llm_rate_limit_per_minute,
+            "rate_limit_per_hour": self.llm_rate_limit_per_hour,
+            "max_input_length": self.llm_input_max_length,
+            "enable_advanced_safety": True,
+            "policy_aware": True,  # Enable policy-aware validation
+            "business_context": True,  # Enable business context allowlist
+            "schema_validation": True,  # Enable schema-specific validation
+        }
 
     # JWT — comes from AWS Secrets Manager at runtime via aws_secrets_service.get_jwt_public_key()
     jwt_public_key: str = Field(default="", alias="JWT_PUBLIC_KEY")  # Placeholder, real key from AWS

@@ -1,5 +1,5 @@
 """
-Comprehensive unit tests for app.core.exceptions module
+Comprehensive unit tests for app.exception.exceptions module
 Tests custom exception handlers and standardized response formatting
 """
 
@@ -10,7 +10,7 @@ from fastapi import Request, HTTPException
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 
-from app.core.exceptions import (
+from app.exception.exceptions import (
     StandardResponse,
     create_standard_response,
     authentication_exception_handler,
@@ -172,7 +172,7 @@ class TestAuthenticationExceptionHandler:
         request = Mock(spec=Request)
         exc = HTTPException(status_code=401, detail="Bearer token required")
         
-        with patch('app.core.exceptions.logger') as mock_logger:
+        with patch('app.exception.exceptions.logger') as mock_logger:
             response = await authentication_exception_handler(request, exc)
             
             assert response.status_code == 401
@@ -294,7 +294,7 @@ class TestGeneralExceptionHandler:
         request = Mock(spec=Request)
         exc = HTTPException(status_code=404, detail="Resource not found")
         
-        with patch('app.core.exceptions.logger') as mock_logger:
+        with patch('app.exception.exceptions.logger') as mock_logger:
             response = await general_exception_handler(request, exc)
             
             assert response.status_code == 404
@@ -357,7 +357,7 @@ class TestValidationExceptionHandler:
         request = Mock(spec=Request)
         exc = ValidationError.from_exception_data("Test", [])
         
-        with patch('app.core.exceptions.logger') as mock_logger:
+        with patch('app.exception.exceptions.logger') as mock_logger:
             response = await validation_exception_handler(request, exc)
             
             assert response.status_code == 422
@@ -418,7 +418,7 @@ class TestInternalServerErrorHandler:
         request = Mock(spec=Request)
         exc = Exception("Database connection failed")
         
-        with patch('app.core.exceptions.logger') as mock_logger:
+        with patch('app.exception.exceptions.logger') as mock_logger:
             response = await internal_server_error_handler(request, exc)
             
             assert response.status_code == 500
@@ -518,7 +518,7 @@ class TestExceptionHandlerIntegration:
         """Test that handlers log appropriately"""
         request = Mock(spec=Request)
         
-        with patch('app.core.exceptions.logger') as mock_logger:
+        with patch('app.exception.exceptions.logger') as mock_logger:
             # Authentication handler should use warning
             auth_exc = HTTPException(status_code=401, detail="Token expired")
             await authentication_exception_handler(request, auth_exc)

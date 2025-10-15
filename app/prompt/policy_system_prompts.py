@@ -249,7 +249,7 @@ if __name__ == "__main__":
     prompts = get_enhanced_prompts()
     
     for name, prompt in prompts.items():
-        print(f"\n📝 {name.upper().replace('_', ' ')} PROMPT:")
+        print(f"\n {name.upper().replace('_', ' ')} PROMPT:")
         print("-" * 40)
         print(prompt[:200] + "..." if len(prompt) > 200 else prompt)
         print(f"Length: {len(prompt)} characters")

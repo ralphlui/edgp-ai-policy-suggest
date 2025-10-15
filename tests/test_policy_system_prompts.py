@@ -18,7 +18,7 @@ def test_enhanced_prompts():
     print("-" * 40)
     
     try:
-        from app.core.prompt_config import get_enhanced_rule_prompt
+        from app.prompt.prompt_config import get_enhanced_rule_prompt
         
         test_schema = {
             "domain": "customer",
@@ -62,7 +62,7 @@ def test_enhanced_prompts():
     print("-" * 40)
     
     try:
-        from app.core.prompt_config import get_enhanced_schema_prompt
+        from app.prompt.prompt_config import get_enhanced_schema_prompt
         
         config_params = {
             "min_columns": 5,
@@ -96,7 +96,7 @@ def test_enhanced_prompts():
     print("-" * 40)
     
     try:
-        from app.core.prompt_config import get_enhanced_column_prompt
+        from app.prompt.prompt_config import get_enhanced_column_prompt
         
         prompt = get_enhanced_column_prompt("healthcare")
         
@@ -122,7 +122,7 @@ def test_enhanced_prompts():
     print("-" * 40)
     
     try:
-        from app.core.prompt_config import PromptConfig, PromptComplexity, get_prompt_manager
+        from app.prompt.prompt_config import PromptConfig, PromptComplexity, get_prompt_manager
         
         # Test different configurations
         basic_config = PromptConfig(
@@ -203,7 +203,7 @@ def show_improvement_comparison():
     print("\n AFTER (Enhanced Rule Generation Prompt):")
     print("-" * 40)
     try:
-        from app.core.prompt_config import get_enhanced_rule_prompt
+        from app.prompt.prompt_config import get_enhanced_rule_prompt
         
         test_schema = {"domain": "customer", "email": {"dtype": "string"}}
         test_rules = [{"rule_name": "expect_column_values_to_not_be_null"}]

@@ -8,7 +8,7 @@ import logging
 import traceback
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/aips/rule", tags=["rule-suggestions"])
+router = APIRouter(prefix="/api/aips/rules", tags=["rule-suggestions"])
 
 
 def _calculate_overall_confidence(state) -> float:
@@ -239,7 +239,7 @@ async def suggest_rules(
                     "after_creation": [
                         "Schema will be saved to vector database",
                         "Optional: Download sample CSV data",
-                        "Call /api/aips/rule/suggest again to get validation rules"
+                        "Call /api/aips/rules/suggest again to get validation rules"
                     ]
                 }
             }, status_code=404)

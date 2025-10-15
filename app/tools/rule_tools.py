@@ -1,8 +1,11 @@
 from langchain.agents import tool
 from langchain_community.chat_models import ChatOpenAI
 from app.core.config import settings
-from app.core.aws_secrets_service import require_openai_api_key
-from app.core.prompt_config import get_enhanced_rule_prompt, get_enhanced_column_prompt
+from app.aws.aws_secrets_service import require_openai_api_key
+from app.prompt.prompt_config import get_enhanced_rule_prompt, get_enhanced_column_prompt
+from app.validation.middleware import AgentValidationContext, validate_input_quick, validate_output_quick
+from app.validation.policy_validator import create_policy_validator, create_policy_sanitizer
+from app.exception.exceptions import ValidationError
 import json, re, requests
 import logging
 import os
@@ -47,7 +50,7 @@ def _get_default_rules() -> list:
 
 @tool
 def suggest_column_rules(data_schema: dict, gx_rules: list) -> str:
-    """Use LLM to suggest GX rules per column with expertise and reasoning."""
+    """Use LLM to suggest GX rules per column with expertise and reasoning. Includes validation and safety checks."""
     
     openai_key = require_openai_api_key()
     llm = ChatOpenAI(model=settings.rules_llm_model, openai_api_key=openai_key, temperature=settings.llm_temperature)
@@ -57,15 +60,63 @@ def suggest_column_rules(data_schema: dict, gx_rules: list) -> str:
     # Use enhanced prompt from configuration system
     prompt = get_enhanced_rule_prompt(domain, data_schema, gx_rules)
 
-    logger.info("LLM Prompt:\n%s", prompt)
-    response = llm.invoke(prompt)
-    logger.info("Raw LLM output:\n%s", response.content)
-    return response.content.strip()
+    # Get validation config and create user context
+    validation_config = None
+    if settings.llm_validation_enabled:
+        validation_config = settings.get_llm_validation_config()
+    
+    # Create a unique user ID for this request (in real app, this would come from authentication)
+    user_id = f"agent_{domain}_{hash(str(data_schema)) % 10000}"
+    
+    try:
+        # Validate input if validation is enabled
+        if validation_config:
+            logger.info(" Validating LLM input for safety and compliance")
+            sanitized_prompt = validate_input_quick(prompt, user_id)
+            logger.info(" Input validation passed")
+        else:
+            sanitized_prompt = prompt
+            logger.info(" LLM validation disabled - proceeding without safety checks")
+
+        logger.info("LLM Prompt:\n%s", sanitized_prompt)
+        
+        # Make LLM call
+        response = llm.invoke(sanitized_prompt)
+        raw_response = response.content.strip()
+        
+        logger.info("Raw LLM output:\n%s", raw_response)
+        
+        # Validate output if validation is enabled
+        if validation_config:
+            logger.info(" Validating LLM output for safety and quality")
+            validated_response = validate_output_quick(raw_response, "content")
+            logger.info(" Output validation passed")
+            return validated_response
+        else:
+            logger.info(" LLM validation disabled - returning raw output")
+            return raw_response
+            
+    except ValidationError as e:
+        logger.error(f" LLM validation failed: {e}")
+        # Return a safe fallback response
+        return json.dumps({
+            "error": "Validation failed - using safe fallback",
+            "message": "The request could not be processed due to safety restrictions",
+            "fallback_rules": [
+                {
+                    "column": col,
+                    "expectations": [{"expectation": "expect_column_values_to_not_be_null"}]
+                } for col in data_schema.keys() if col != "domain"
+            ]
+        })
+    except Exception as e:
+        logger.error(f" Unexpected error in LLM call: {e}")
+        raise
 
 
 @tool
 def suggest_column_names_only(domain: str) -> list:
-    """Use LLM to suggest CSV column names with business intelligence expertise."""
+    """Use LLM to suggest CSV column names with business intelligence expertise. Includes validation and safety checks."""
     
     openai_key = require_openai_api_key()
     llm = ChatOpenAI(model=settings.rules_llm_model, openai_api_key=openai_key, temperature=settings.llm_temperature)
@@ -73,10 +124,55 @@ def suggest_column_names_only(domain: str) -> list:
     # Use enhanced prompt from configuration system  
     prompt = get_enhanced_column_prompt(domain)
 
-    logger.info("LLM Prompt for column names:\n%s", prompt)
-    response = llm.invoke(prompt)
-    logger.info("Raw LLM column names output:\n%s", response.content)
-    return response.content.strip()
+    # Get validation config
+    validation_config = None
+    if settings.llm_validation_enabled:
+        validation_config = settings.get_llm_validation_config()
+    
+    # Create a unique user ID for this request
+    user_id = f"agent_columns_{domain}_{hash(domain) % 10000}"
+    
+    try:
+        # Validate input if validation is enabled
+        if validation_config:
+            logger.info(" Validating column suggestion input")
+            sanitized_prompt = validate_input_quick(prompt, user_id)
+            logger.info(" Input validation passed")
+        else:
+            sanitized_prompt = prompt
+            logger.info(" LLM validation disabled")
+
+        logger.info("LLM Prompt for column names:\n%s", sanitized_prompt)
+        
+        # Make LLM call
+        response = llm.invoke(sanitized_prompt)
+        raw_response = response.content.strip()
+        
+        logger.info("Raw LLM column names output:\n%s", raw_response)
+        
+        # Validate output if validation is enabled
+        if validation_config:
+            logger.info(" Validating column suggestion output")
+            validated_response = validate_output_quick(raw_response, "content")
+            logger.info(" Output validation passed")
+            return validated_response
+        else:
+            logger.info(" LLM validation disabled")
+            return raw_response
+            
+    except ValidationError as e:
+        logger.error(f" Column suggestion validation failed: {e}")
+        # Return safe fallback column names
+        return json.dumps([
+            f"{domain}_id",
+            f"{domain}_name", 
+            f"{domain}_description",
+            "created_date",
+            "updated_date"
+        ])
+    except Exception as e:
+        logger.error(f" Unexpected error in column suggestion: {e}")
+        raise
 
 
 @tool

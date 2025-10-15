@@ -11,6 +11,8 @@ from app.tools.rule_tools import (
 )
 from app.validation.llm_validator import validate_llm_response
 from app.validation.metrics import record_validation_metric
+from app.validation.middleware import AgentValidationContext
+from app.core.config import settings
 import logging
 import time
 import json
@@ -66,6 +68,7 @@ class AgentState(BaseModel):
     
     # Context and memory
     context: Dict[str, Any] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
     working_memory: List[str] = Field(default_factory=list)
     
     # Execution metadata
@@ -262,7 +265,7 @@ def build_graph():
     workflow = StateGraph(AgentState)
 
     # Planning phase
-    workflow.add_node("plan", lambda s: {
+    workflow.add_node("create_plan", lambda s: {
         "plan": create_agent_plan(s.data_schema),
         "context": {
             **s.context,
@@ -329,10 +332,10 @@ def build_graph():
     })
 
     # Build the workflow
-    workflow.set_entry_point("plan")
+    workflow.set_entry_point("create_plan")
     
     # Sequential ReAct flow
-    workflow.add_edge("plan", "reason_fetch")
+    workflow.add_edge("create_plan", "reason_fetch")
     workflow.add_edge("reason_fetch", "fetch_rules")
     workflow.add_edge("fetch_rules", "observe_fetch")
     workflow.add_edge("observe_fetch", "reason_suggest")
@@ -368,7 +371,7 @@ def build_graph():
 def run_agent(schema: dict) -> List[Dict[str, Any]]:
     """
     Run the enhanced agentic rule suggestion workflow with ReAct pattern,
-    planning, reflection, and comprehensive monitoring
+    planning, reflection, validation, and comprehensive monitoring
     
     Args:
         schema: Domain schema dictionary
@@ -379,71 +382,91 @@ def run_agent(schema: dict) -> List[Dict[str, Any]]:
     validation_start_time = time.time()
     domain = schema.get("domain", "unknown")
     
+    # Create validation context if enabled
+    validation_context = None
+    if settings.llm_validation_enabled:
+        validation_config = settings.get_llm_validation_config()
+        user_id = f"agent_{domain}_{hash(str(schema)) % 10000}"
+        validation_context = AgentValidationContext(user_id, validation_config)
+        logger.info("🛡️ LLM validation enabled for agent workflow")
+    else:
+        logger.info("⚠️ LLM validation disabled")
+    
     try:
-        logger.info(f"🤖 Starting enhanced agentic workflow for domain: {domain}")
-        
-        # Initialize enhanced state
-        initial_state = AgentState(data_schema=schema)
-        
-        # Build and execute the enhanced graph
-        graph = build_graph()
-        result = graph.invoke(initial_state)
-
-        # Extract results with enhanced handling
-        if isinstance(result, dict):
-            logger.warning("LangGraph returned dict instead of AgentState")
-            rule_suggestions = result.get("rule_suggestions", [])
-            thoughts = result.get("thoughts", [])
-            observations = result.get("observations", [])
-            reflections = result.get("reflections", [])
-            execution_metrics = result.get("execution_metrics", {})
-            step_history = result.get("step_history", [])
-        else:
-            rule_suggestions = result.rule_suggestions or []
-            thoughts = result.thoughts
-            observations = result.observations  
-            reflections = result.reflections
-            execution_metrics = result.execution_metrics
-            step_history = result.step_history
-
-        # Enhanced logging with agent reasoning
-        logger.info(f"🧠 Agent completed {len(thoughts)} reasoning steps")
-        logger.info(f"👁️ Agent made {len(observations)} observations")
-        logger.info(f"🔄 Agent performed {len(reflections)} reflection cycles")
-        logger.info(f"📊 Generated {len(rule_suggestions)} rule suggestions")
-        
-        # Log key insights from agent reasoning
-        if thoughts:
-            logger.info("💭 Key agent thoughts:")
-            for i, thought in enumerate(thoughts[:3], 1):  # Log first 3 thoughts
-                logger.info(f"   {i}. {thought[:100]}...")
-                
-        if reflections:
-            logger.info("🔄 Agent reflections:")
-            for i, reflection in enumerate(reflections[-2:], 1):  # Log last 2 reflections
-                logger.info(f"   {i}. {reflection[:100]}...")
-
-        # Enhanced validation with agent context
-        if rule_suggestions:
-            validation_response = {
-                "domain": domain,
-                "rules": rule_suggestions,
-                "explanation": "Enhanced AI agent generated rules with reasoning and reflection",
-                "agent_metadata": {
-                    "reasoning_steps": len(thoughts),
-                    "observations": len(observations),
-                    "reflections": len(reflections),
-                    "execution_time": execution_metrics.get("total_execution_time", 0),
-                    "steps_completed": len(step_history)
-                }
-            }
+        with validation_context if validation_context else None as validator:
+            logger.info(f"🤖 Starting enhanced agentic workflow for domain: {domain}")
             
-            validation_result = validate_llm_response(
-                response=validation_response,
-                response_type="rule",
-                strict_mode=False,
-                auto_correct=True
-            )
+            # Initialize enhanced state
+            initial_state = AgentState(data_schema=schema)
+            
+            # Add validation context to state if available
+            if validator:
+                initial_state.metadata["validation_context"] = validator
+            
+            # Build and execute the enhanced graph
+            graph = build_graph()
+            result = graph.invoke(initial_state)
+
+            # Extract results with enhanced handling
+            if isinstance(result, dict):
+                logger.warning("LangGraph returned dict instead of AgentState")
+                rule_suggestions = result.get("rule_suggestions", [])
+                thoughts = result.get("thoughts", [])
+                observations = result.get("observations", [])
+                reflections = result.get("reflections", [])
+                execution_metrics = result.get("execution_metrics", {})
+                step_history = result.get("step_history", [])
+            else:
+                rule_suggestions = result.rule_suggestions or []
+                thoughts = result.thoughts
+                observations = result.observations  
+                reflections = result.reflections
+                execution_metrics = result.execution_metrics
+                step_history = result.step_history
+
+            # Enhanced logging with agent reasoning
+            logger.info(f" Agent completed {len(thoughts)} reasoning steps")
+            logger.info(f" Agent made {len(observations)} observations")
+            logger.info(f" Agent performed {len(reflections)} reflection cycles")
+            logger.info(f" Generated {len(rule_suggestions)} rule suggestions")
+            
+            # Log validation metrics if available
+            if validator:
+                validation_metrics = validator.get_metrics()
+                logger.info(f" Validation metrics: {validation_metrics}")
+            
+            # Log key insights from agent reasoning
+            if thoughts:
+                logger.info(" Key agent thoughts:")
+                for i, thought in enumerate(thoughts[:3], 1):  # Log first 3 thoughts
+                    logger.info(f"   {i}. {thought[:100]}...")
+                    
+            if reflections:
+                logger.info(" Agent reflections:")
+                for i, reflection in enumerate(reflections[-2:], 1):  # Log last 2 reflections
+                    logger.info(f"   {i}. {reflection[:100]}...")
+
+            # Enhanced validation with agent context
+            if rule_suggestions:
+                validation_response = {
+                    "domain": domain,
+                    "rules": rule_suggestions,
+                    "explanation": "Enhanced AI agent generated rules with reasoning and reflection",
+                    "agent_metadata": {
+                        "reasoning_steps": len(thoughts),
+                        "observations": len(observations),
+                        "reflections": len(reflections),
+                        "execution_time": execution_metrics.get("total_execution_time", 0),
+                        "steps_completed": len(step_history)
+                    }
+                }
+                
+                validation_result = validate_llm_response(
+                    response=validation_response,
+                    response_type="rule",
+                    strict_mode=False,
+                    auto_correct=True
+                )
             
             # Enhanced metrics recording
             validation_time_ms = (time.time() - validation_start_time) * 1000
@@ -465,22 +488,22 @@ def run_agent(schema: dict) -> List[Dict[str, Any]]:
             
             # Log validation results with agent context
             if validation_result.issues:
-                logger.warning(f"⚠️ Validation found {len(validation_result.issues)} issues:")
+                logger.warning(f" Validation found {len(validation_result.issues)} issues:")
                 for issue in validation_result.issues:
                     logger.warning(f"   {issue.severity.value.upper()}: {issue.field} - {issue.message}")
             
-            logger.info(f"✅ Validation confidence: {validation_result.confidence_score:.2f}")
-            logger.info(f"⏱️ Total execution time: {execution_metrics.get('total_execution_time', 0):.2f}s")
+            logger.info(f" Validation confidence: {validation_result.confidence_score:.2f}")
+            logger.info(f" Total execution time: {execution_metrics.get('total_execution_time', 0):.2f}s")
             
             # Use corrected rules if available
             if validation_result.corrected_data and validation_result.corrected_data.get("rules"):
-                logger.info("🔧 Using auto-corrected rule suggestions")
+                logger.info(" Using auto-corrected rule suggestions")
                 rule_suggestions = validation_result.corrected_data["rules"]
         
         return rule_suggestions
         
     except Exception as e:
-        logger.error(f"❌ Enhanced agent execution failed for domain {domain}: {e}")
+        logger.error(f" Enhanced agent execution failed for domain {domain}: {e}")
         
         # Enhanced error handling with metrics
         validation_time_ms = (time.time() - validation_start_time) * 1000
@@ -532,7 +555,7 @@ def generate_agent_report(state: AgentState) -> str:
     
     # Planning Phase
     if state.plan:
-        report.append("## 📋 Agent Planning")
+        report.append("##  Agent Planning")
         report.append(f"**Goal**: {state.plan.goal}")
         report.append(f"**Plan Type**: {state.plan.context.get('plan_type', 'unknown')}")
         report.append("**Planned Steps**:")
@@ -542,28 +565,28 @@ def generate_agent_report(state: AgentState) -> str:
     
     # Reasoning Chain
     if state.thoughts:
-        report.append("## 🧠 Reasoning Chain")
+        report.append("##  Reasoning Chain")
         for i, thought in enumerate(state.thoughts, 1):
             report.append(f"**Step {i}**: {thought}")
         report.append("")
     
     # Observations
     if state.observations:
-        report.append("## 👁️ Observations")
+        report.append("##  Observations")
         for i, observation in enumerate(state.observations, 1):
             report.append(f"**Observation {i}**: {observation}")
         report.append("")
     
     # Reflections
     if state.reflections:
-        report.append("## 🔄 Reflections")
+        report.append("##  Reflections")
         for i, reflection in enumerate(state.reflections, 1):
             report.append(f"**Reflection {i}**: {reflection}")
         report.append("")
     
     # Quality Metrics
     if state.quality_metrics:
-        report.append("## 📊 Quality Metrics")
+        report.append("##  Quality Metrics")
         for metric, value in state.quality_metrics.items():
             if isinstance(value, float):
                 report.append(f"- **{metric}**: {value:.3f}")
@@ -573,7 +596,7 @@ def generate_agent_report(state: AgentState) -> str:
     
     # Error Summary
     if state.errors:
-        report.append("## ⚠️ Issues Encountered")
+        report.append("##  Issues Encountered")
         for i, error in enumerate(state.errors, 1):
             report.append(f"{i}. {error}")
         report.append("")

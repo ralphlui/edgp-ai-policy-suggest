@@ -5,10 +5,10 @@ from app.aoss.column_store import OpenSearchColumnStore, ColumnDoc
 from app.core.config import settings
 from app.embedding.embedder import embed_column_names_batched_async
 import traceback
-import logging, time, pandas as pd, io
+import logging, time, io, csv
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/aips/domain", tags=["domain-schema"])
+router = APIRouter(prefix="/api/aips/domains", tags=["domain-schema"])
 
 # --- Domain & Schema Endpoints ---
 
@@ -77,7 +77,7 @@ async def create_domain(
                         "actions": {
                             "extend-schema": {
                                 "description": "Add new columns to existing domain",
-                                "endpoint": "/api/aips/domain/extend-schema",
+                                "endpoint": "/api/aips/domains/extend-schema",
                                 "method": "POST",
                                 "payload": {
                                     "domain": existing_domain,
@@ -87,7 +87,7 @@ async def create_domain(
                             },
                             "suggest_extensions": {
                                 "description": "Get AI suggestions for additional columns",
-                                "endpoint": "/api/aips/domain/suggest-extend-schema",
+                                "endpoint": "/api/aips/domains/suggest-extend-schema",
                                 "method": "POST",
                                 "payload": {
                                     "domain": existing_domain,
@@ -97,7 +97,7 @@ async def create_domain(
                             },
                             "view_domain": {
                                 "description": "View complete domain details",
-                                "endpoint": f"/api/aips/domain/{existing_domain}",
+                                "endpoint": f"/api/aips/domains/{existing_domain}",
                                 "method": "GET"
                             }
                         }
@@ -260,9 +260,6 @@ async def create_domain(
 
         # Step 3: Enhanced return logic with agentic rule suggestions
         if return_csv:
-            # Create empty DataFrame with just column headers (no sample data)
-            df = pd.DataFrame(columns=column_names)
-            
             # AGENTIC ENHANCEMENT: Generate rule suggestions for CSV response
             rule_suggestions = []
             
@@ -294,8 +291,10 @@ async def create_domain(
             csv_filename = f"{normalized_domain}_schema_{int(__import__('time').time())}.csv"
             csv_path = os.path.join(temp_dir, csv_filename)
             
-            # Save CSV to temp file
-            df.to_csv(csv_path, index=False)
+            # Create CSV with just column headers (no sample data) using built-in csv module
+            with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(column_names)  # Write header row
             
             # Return JSON response with rule suggestions AND CSV download info
             # Build response with appropriate rule messaging
@@ -317,7 +316,7 @@ async def create_domain(
                     "download_url": f"{request.base_url}api/aips/download-csv/{csv_filename}",
                     "type": "template",
                     "description": "CSV file with column headers.",
-                    "columns": list(df.columns)
+                    "columns": column_names
                 },
                 "rules_available": rules_available,
                 "rule_suggestions": rule_suggestions,
@@ -394,7 +393,7 @@ async def create_domain(
                 response_data["rule_suggestions"] = []
                 response_data["total_rules"] = 0
                 response_data["rule_generation_error"] = str(agentic_error)
-                response_data["message"] += " Automatic rule generation failed. Call /api/aips/rule/suggest to generate validation rules manually."
+                response_data["message"] += " Automatic rule generation failed. Call /api/aips/rules/suggest to generate validation rules manually."
                 
         else:
             response_data["status"] = "partial_success"
@@ -412,7 +411,7 @@ async def create_domain(
 
 
 
-@router.get("/domains")
+@router.get("")
 async def get_domains(
     user: UserInfo = Depends(verify_any_scope_token)
 ):
@@ -692,7 +691,7 @@ async def regenerate_suggestions(request: Request):
                 "note": "Column names only suggested. Data types will be inferred from actual CSV data.",
                 "create_schema_with_csv": {
                     "description": "Use suggested column names to create schema from CSV",
-                    "endpoint": "/api/aips/domain/create",
+                    "endpoint": "/api/aips/domains/create",
                     "method": "POST",
                     "payload": {
                         "domain": domain,
@@ -702,7 +701,7 @@ async def regenerate_suggestions(request: Request):
                 },
                 "create_schema_only": {
                     "description": "Use suggested column names to create schema",
-                    "endpoint": "/api/aips/domain/create",
+                    "endpoint": "/api/aips/domains/create",
                     "method": "POST",
                     "payload": {
                         "domain": domain,
@@ -715,7 +714,7 @@ async def regenerate_suggestions(request: Request):
                 "after_confirmation": [
                     "Schema will be saved to vector database",
                     "Optional: Download sample CSV data",
-                    "Call /api/aips/domain/create"
+                    "Call /api/aips/domains/create"
                 ]
             }
         })
@@ -949,9 +948,9 @@ async def extend_domain(request: Request):
             "duplicates_skipped": duplicates_skipped,
             "complete_schema": combined_schema,
             "actions": {
-                "suggest_more": f"/api/aips/domain/suggest-extend-schema/{domain_name}",
-                "view_domain": f"/api/aips/domain/{domain_name}",
-                "regenerate_extensions": "/api/aips/domain/extend-schema"
+                "suggest_more": f"/api/aips/domains/suggest-extend-schema/{domain_name}",
+                "view_domain": f"/api/aips/domains/{domain_name}",
+                "regenerate_extensions": "/api/aips/domains/extend-schema"
             }
         })
         
@@ -1080,9 +1079,9 @@ async def suggest_extensions(domain_name: str, request: Request):
             "suggestions": suggestions_by_focus,
             "existing_columns": [col.get("column_name") for col in existing_columns],
             "actions": {
-                "extend_domain": "/api/aips/domain/extend-schema",
-                "view_domain": f"/api/aips/domain/{domain_name}",
-                "resuggest_domain_schema": "/api/aips/domain/suggest-schema"
+                "extend_domain": "/api/aips/domains/extend-schema",
+                "view_domain": f"/api/aips/domains/{domain_name}",
+                "resuggest_domain_schema": "/api/aips/domains/suggest-schema"
             }
         })
         

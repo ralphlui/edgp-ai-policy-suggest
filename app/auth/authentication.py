@@ -72,7 +72,7 @@ class JWTTokenValidator:
         """Load RSA public key from configuration lazily"""
         try:
             # First try getting from AWS Secrets Manager
-            from app.core.aws_secrets_service import get_jwt_public_key
+            from app.aws.aws_secrets_service import get_jwt_public_key
             jwt_key = get_jwt_public_key()
             
             if jwt_key:

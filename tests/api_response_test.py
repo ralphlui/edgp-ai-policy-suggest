@@ -4,13 +4,13 @@ Test what the actual rule/suggest API will return with confidence scores
 """
 
 def simulate_api_response():
-    """Simulate what your /api/aips/rule/suggest endpoint will return"""
+    """Simulate what your /api/aips/rules/suggest endpoint will return"""
     
-    print(" Your Enhanced /api/aips/rule/suggest API Response")
+    print(" Your Enhanced /api/aips/rules/suggest API Response")
     print("=" * 60)
     
     print("\n REQUEST:")
-    print("POST /api/aips/rule/suggest")
+    print("POST /api/aips/rules/suggest")
     print('{"domain": "customer"}')
     
     print("\n RESPONSE (with default insights + confidence):")

@@ -90,7 +90,7 @@ def mock_settings():
 @pytest.fixture
 def base_validator(mock_settings):
     """Create JWTTokenValidator instance for testing with shared settings"""
-    with patch('app.core.aws_secrets_service.get_jwt_public_key') as mock_get_jwt:
+    with patch('app.aws.aws_secrets_service.get_jwt_public_key') as mock_get_jwt:
         mock_get_jwt.return_value = "-----BEGIN PUBLIC KEY-----\ntest_key\n-----END PUBLIC KEY-----"
         return JWTTokenValidator()
 
@@ -171,7 +171,7 @@ class TestJWTTokenValidator:
     
     def test_validator_initialization(self, mock_settings):
         """Test validator initialization"""
-        with patch('app.core.aws_secrets_service.get_jwt_public_key') as mock_get_jwt:
+        with patch('app.aws.aws_secrets_service.get_jwt_public_key') as mock_get_jwt:
             mock_get_jwt.return_value = "-----BEGIN PUBLIC KEY-----\ntest_key\n-----END PUBLIC KEY-----"
             validator = JWTTokenValidator()
             
@@ -575,7 +575,7 @@ class TestEnhancedValidatorEdgeCases:
     def validator_no_key(self):
         """Validator with no public key configured"""
         with patch('app.auth.authentication.settings') as mock_settings, \
-             patch('app.core.aws_secrets_service.get_jwt_public_key') as mock_get_jwt:
+             patch('app.aws.aws_secrets_service.get_jwt_public_key') as mock_get_jwt:
             mock_settings.jwt_public_key = None
             mock_settings.jwt_algorithm = "RS256"
             mock_settings.admin_api_url = "http://test-auth-service"
@@ -586,7 +586,7 @@ class TestEnhancedValidatorEdgeCases:
     def validator_base64_key(self):
         """Validator with base64 encoded public key"""
         with patch('app.auth.authentication.settings') as mock_settings, \
-             patch('app.core.aws_secrets_service.get_jwt_public_key') as mock_get_jwt:
+             patch('app.aws.aws_secrets_service.get_jwt_public_key') as mock_get_jwt:
             # Simulate base64 encoded key (without PEM headers)
             mock_settings.jwt_public_key = "LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUF0dz"
             mock_settings.jwt_algorithm = "RS256"
@@ -692,19 +692,19 @@ class TestJWTAuthenticationIntegration:
     
     def test_missing_token(self, mocked_test_client):
         """Test authentication failure with missing token"""
-        response = mocked_test_client.post("/api/aips/suggest-rules", 
+        response = mocked_test_client.post("/api/aips/rules/suggest", 
                                    json={"domain": "test_domain"})
-        assert response.status_code == 401
+        assert response.status_code == 403
         data = response.json()
         assert data["success"] is False
     
     def test_invalid_token_format(self, mocked_test_client):
         """Test authentication failure with invalid token format"""
         headers = {"Authorization": "InvalidToken"}
-        response = mocked_test_client.post("/api/aips/suggest-rules", 
+        response = mocked_test_client.post("/api/aips/rules/suggest", 
                                    json={"domain": "test_domain"}, 
                                    headers=headers)
-        assert response.status_code == 401
+        assert response.status_code == 403
 
 
 class TestLiveAPIEndpoints:

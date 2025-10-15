@@ -63,7 +63,7 @@ def manual_test_endpoint(url, method="GET", data=None, headers=None, expected_st
         print(f"   Status: {response.status_code}")
         
         if response.status_code == expected_status:
-            print(f"   ✅ PASS")
+            print(f"    PASS")
             if response.status_code == 200:
                 try:
                     data = response.json()
@@ -73,19 +73,19 @@ def manual_test_endpoint(url, method="GET", data=None, headers=None, expected_st
                     print(f"   Response: {response.text[:200]}...")
                     return response.text
         else:
-            print(f"   ❌ FAIL - Expected {expected_status}, got {response.status_code}")
+            print(f"    FAIL - Expected {expected_status}, got {response.status_code}")
             print(f"   Response: {response.text}")
         
         return None
         
     except Exception as e:
-        print(f"   ❌ ERROR: {e}")
+        print(f"    ERROR: {e}")
         return None
 
 
 def manual_test_vector_db_endpoints():
     """Manual test for vector database endpoints"""
-    print("🚀 Vector Database Live API Test")
+    print(" Vector Database Live API Test")
     print("=" * 60)
     
     base_url = "http://localhost:8092"
@@ -128,21 +128,21 @@ def manual_test_vector_db_endpoints():
     )
     
     print("\n" + "=" * 60)
-    print("📋 Test Summary:")
-    print("✅ Vector database query fix: metadata.domain field mapping")
-    print("✅ LangGraph compatibility fix: removed return_dict parameter")
-    print("✅ Domain 'product' should now be found in vector database")
-    print("✅ suggest-rules API should work with valid JWT token")
+    print(" Test Summary:")
+    print(" Vector database query fix: metadata.domain field mapping")
+    print(" LangGraph compatibility fix: removed return_dict parameter")
+    print(" Domain 'product' should now be found in vector database")
+    print(" suggest-rules API should work with valid JWT token")
     
     if domains_data and "domains" in domains_data:
-        print(f"\n📊 Found {domains_data['total_domains']} domain(s) with {domains_data['total_columns']} total columns:")
+        print(f"\n Found {domains_data['total_domains']} domain(s) with {domains_data['total_columns']} total columns:")
         for domain, columns in domains_data["domains"].items():
             print(f"   • {domain}: {len(columns)} columns")
 
 
 def manual_test_schema_validation():
     """Manual test for schema validation functionality"""
-    print("\n🧪 Testing schema validation...")
+    print("\n Testing schema validation...")
     
     # Test valid column schema
     valid_column = {
@@ -153,7 +153,7 @@ def manual_test_schema_validation():
     
     result = validate_column_schema(valid_column)
     assert result is True
-    print("✅ Valid column schema test passed")
+    print(" Valid column schema test passed")
     
     # Test invalid column schema (missing samples)
     invalid_column = {
@@ -164,7 +164,7 @@ def manual_test_schema_validation():
     
     result = validate_column_schema(invalid_column)
     assert result is False
-    print("✅ Invalid column schema test passed")
+    print(" Invalid column schema test passed")
     
     # Test various data types
     data_types = ["string", "integer", "float", "date", "boolean"]
@@ -176,27 +176,24 @@ def manual_test_schema_validation():
         }
         result = validate_column_schema(test_column)
         assert result is True
-    print("✅ All data types validation test passed")
+    print(" All data types validation test passed")
     
-    print("✅ Schema validation tests completed")
+    print(" Schema validation tests completed")
 
 
 def manual_test_schema_loader_mock():
     """Manual test for schema loader with mocked data"""
-    print("\n🧪 Testing schema loader with mock data...")
+    print("\n Testing schema loader with mock data...")
     
     # This would normally require a running OpenSearch instance
     # For manual testing, we'll create a mock scenario
-    print("📝 Schema loader functionality verified")
+    print(" Schema loader functionality verified")
     print("   - get_schema_by_domain() function available")
     print("   - validate_column_schema() function available") 
     print("   - get_store() function available")
-    print("✅ Schema loader structure test passed")
+    print(" Schema loader structure test passed")
 
 
-# ==========================================================================
-# PYTEST TEST CLASSES (Run with pytest if available)
-# ==========================================================================
 
 if IMPORTS_AVAILABLE:
     
@@ -1389,10 +1386,6 @@ def test_error_handling():
         assert columns == []
 
 
-# ==========================================================================
-# MAIN EXECUTION FOR MANUAL TESTING
-# ==========================================================================
-
 def run_manual_tests():
     """Run all manual tests"""
     print("🧪 Running consolidated Vector Database tests...")
@@ -1406,41 +1399,41 @@ def run_manual_tests():
         manual_test_schema_loader_mock()
         
         # Test case-insensitive domain validation
-        print("\n🔍 Testing case-insensitive domain validation...")
+        print("\n Testing case-insensitive domain validation...")
         try:
             test_case_insensitive_domain_validation()
-            print("✅ Case-insensitive domain validation tests passed")
+            print(" Case-insensitive domain validation tests passed")
         except Exception as e:
-            print(f"❌ Case-insensitive domain validation test failed: {e}")
+            print(f" Case-insensitive domain validation test failed: {e}")
         
         # Test live endpoints if requests is available
         if 'requests' in sys.modules or IMPORTS_AVAILABLE:
             try:
                 manual_test_vector_db_endpoints()
             except Exception as e:
-                print(f"⚠️ Live endpoint testing skipped: {e}")
+                print(f" Live endpoint testing skipped: {e}")
         
         print("=" * 60)
-        print("✅ All manual tests completed successfully!")
-        print("🔍 This consolidated file combines functionality from:")
+        print(" All manual tests completed successfully!")
+        print(" This consolidated file combines functionality from:")
         print("   - test_vector_fix.py (live API endpoint testing)")
         print("   - test_vector_db_schema_loader.py (schema loading and validation)")
         print("   - Case-insensitive domain validation testing")
         print("=" * 60)
         
     except Exception as e:
-        print(f"❌ Manual test failed: {e}")
+        print(f" Manual test failed: {e}")
         import traceback
         traceback.print_exc()
 
 
 if __name__ == "__main__":
     if IMPORTS_AVAILABLE:
-        print("✅ All imports available - can run with pytest")
+        print(" All imports available - can run with pytest")
         print("Run with: python tests/run_tests.py --pattern 'test_vector'")
         print("Or manually: python tests/test_vector_database_consolidated.py")
     else:
-        print("⚠️ Some imports not available - running manual tests only")
+        print(" Some imports not available - running manual tests only")
     
     # Run manual tests
     run_manual_tests()

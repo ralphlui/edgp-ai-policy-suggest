@@ -39,17 +39,14 @@ from openai import AsyncOpenAI
 # App imports
 from app.vector_db.schema_loader import validate_column_schema
 from app.core.config import settings
-from app.core.prompt_config import get_enhanced_schema_prompt
-from app.core.aws_secrets_service import require_openai_api_key
-from app.core.exceptions import SchemaGenerationError
+from app.prompt.prompt_config import get_enhanced_schema_prompt
+from app.aws.aws_secrets_service import require_openai_api_key
+from app.exception.exceptions import SchemaGenerationError
 from app.validation.llm_validator import validate_llm_response, ValidationSeverity
 from app.validation.metrics import record_validation_metric
 
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# CONFIGURATION AND DATA MODELS
-# =============================================================================
 
 @dataclass
 class SchemaGenerationConfig:
@@ -920,10 +917,6 @@ class SchemaSuggesterEnhanced:
                 "metadata": {"error": True}
             }
 
-
-# =============================================================================
-# UTILITY FUNCTIONS
-# =============================================================================
 
 def _validate_samples_for_type(samples: List[str], col_type: str) -> bool:
     """

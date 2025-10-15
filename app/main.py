@@ -8,12 +8,14 @@ from app.api.domain_schema_routes import router as domain_schema_router
 from app.api.rule_suggestion_routes import router as rule_suggestion_router
 from app.api.aoss_routes import router as vector_router
 from app.api.agent_insights_routes import router as agent_insights_router
-from app.core.exceptions import (
+from app.exception.exceptions import (
     authentication_exception_handler,
     general_exception_handler,
     validation_exception_handler,
     internal_server_error_handler
 )
+from app.aws.audit_middleware import add_audit_middleware
+from app.aws.audit_service import audit_system_health
 import time, logging
 
 # Import validation router
@@ -46,6 +48,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add audit logging middleware - captures ALL API transactions
+add_audit_middleware(
+    app, 
+    excluded_paths=[
+        "/health", "/metrics", "/docs", "/openapi.json", "/favicon.ico", 
+        "/api/aips/health", "/api/aips/info", "/static", "/dashboard"
+    ],  # Only exclude system monitoring endpoints
+    log_request_body=True,  # Capture request bodies for complete transaction tracking
+    log_response_body=False,  # Keep response logging disabled for performance
+    max_body_size=10000  # Increase size limit for better transaction details
+)
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start = time.time()
@@ -56,7 +70,7 @@ async def log_requests(request: Request, call_next):
 
 @app.get("/api/aips/health")
 def health():
-    """Enhanced health check with AWS connection status"""
+    """Enhanced health check with AWS connection status and audit system"""
     from app.api.aoss_routes import get_store
     
     health_status = {
@@ -67,7 +81,8 @@ def health():
         "services": {
             "fastapi": "healthy",
             "opensearch": "unknown",
-            "validation": "unknown"
+            "validation": "unknown",
+            "audit_system": "unknown"
         }
     }
     
@@ -102,6 +117,23 @@ def health():
         health_status["services"]["validation"] = "unavailable"
         health_status["validation_message"] = "Validation system not installed"
     
+    # Test audit system
+    try:
+        audit_health = audit_system_health()
+        if audit_health["sqs_configured"] and audit_health["sqs_client_initialized"]:
+            if audit_health["connection_test"]:
+                health_status["services"]["audit_system"] = "healthy"
+            else:
+                health_status["services"]["audit_system"] = "degraded"
+                health_status["audit_message"] = "SQS connection test failed"
+        else:
+            health_status["services"]["audit_system"] = "unavailable"
+            health_status["audit_message"] = "SQS not configured - audit logs will be written locally"
+        health_status["audit_details"] = audit_health
+    except Exception as e:
+        health_status["services"]["audit_system"] = "error"
+        health_status["audit_error"] = str(e)[:100]
+    
     # Overall status
     unhealthy_services = [
         service for service, status in health_status["services"].items() 
@@ -126,7 +158,7 @@ def service_info():
             "health": {
                 "method": "GET",
                 "path": "/api/aips/health",
-                "description": "Health check with OpenSearch status"
+                "description": "Health check with OpenSearch and audit system status"
             },
             "info": {
                 "method": "GET",
@@ -135,27 +167,27 @@ def service_info():
             },
             "suggest_rules": {
                 "method": "POST",
-                "path": "/api/aips/rule/suggest",
+                "path": "/api/aips/rules/suggest",
                 "description": "Suggest validation rules for a domain with agent insights by default"
             },
             "create_domain": {
                 "method": "POST",
-                "path": "/api/aips/domain/create",
+                "path": "/api/aips/domains/create",
                 "description": "Create a new domain with columns"
             },
             "extend_domain": {
                 "method": "PUT",
-                "path": "/api/aips/domain/extend-schema",
+                "path": "/api/aips/domains/extend-schema",
                 "description": "Extend an existing domain with new columns"
             },
             "suggest_extend_schema": {
                 "method": "POST",
-                "path": "/api/aips/domain/suggest-extend-schema/{domain_name}",
+                "path": "/api/aips/domains/suggest-extend-schema/{domain_name}",
                 "description": "Suggest additional columns for an existing domain"
             },
             "suggest_schema": {
                 "method": "POST",
-                "path": "/api/aips/domain/suggest-schema",
+                "path": "/api/aips/domains/suggest-schema",
                 "description": "AI-powered domain schema suggestions"
             },
             "vector_status": {
@@ -170,7 +202,7 @@ def service_info():
             },
             "domain_details": {
                 "method": "GET",
-                "path": "/api/aips/domain/{domain_name}",
+                "path": "/api/aips/domains/{domain_name}",
                 "description": "Get details for a specific domain"
             }
         },
