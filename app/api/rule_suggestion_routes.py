@@ -216,7 +216,7 @@ async def suggest_rules(
                     "note": "Column names only suggested. Data types will be inferred from actual CSV data.",
                     "create_schema_with_csv": {
                         "description": "Use suggested column names to create schema from CSV",
-                        "endpoint": "/api/aips/create/domain",
+                        "endpoint": "/api/aips/domains/create",
                         "method": "POST",
                         "payload": {
                             "domain": domain,
@@ -226,7 +226,7 @@ async def suggest_rules(
                     },
                     "create_schema_only": {
                         "description": "Use suggested column names to create schema",
-                        "endpoint": "/api/aips/create/domain",
+                        "endpoint": "/api/aips/domains/create",
                         "method": "POST",
                         "payload": {
                             "domain": domain,
