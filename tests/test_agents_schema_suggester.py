@@ -23,7 +23,7 @@ class TestSchemaGenerationConfig:
         
         config = SchemaGenerationConfig()
         assert config.min_columns == 5
-        assert config.max_columns == 11
+        assert config.max_columns == 20
         assert config.min_samples == 3
         assert config.max_retries == 3
         assert config.timeout_seconds == 30
