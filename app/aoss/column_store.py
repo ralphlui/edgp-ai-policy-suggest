@@ -381,7 +381,7 @@ class OpenSearchColumnStore:
 # Global store instance for backward compatibility with tests
 _store_instance = None
 
-def get_store(index_name: str = "edgp-ai-policy-suggest-column-index") -> Optional[OpenSearchColumnStore]:
+def get_store(index_name: str = "edgp-column-metadata") -> Optional[OpenSearchColumnStore]:
     """
     Get or create a global OpenSearchColumnStore instance.
     This function exists for backward compatibility with existing tests.
