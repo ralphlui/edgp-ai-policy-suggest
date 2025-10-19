@@ -12,7 +12,7 @@ router = APIRouter(prefix="/api/aips/domains", tags=["domain-schema"])
 
 # --- Domain & Schema Endpoints ---
 
-# Helper function
+# Helper functions
 _store = None
 def get_store() -> OpenSearchColumnStore:
     global _store
@@ -24,6 +24,32 @@ def get_store() -> OpenSearchColumnStore:
             logger.error(f" Failed to initialize OpenSearch store: {e}")
             return None
     return _store
+
+def _is_similar_column_name(name1: str, name2: str) -> bool:
+    """Check if two column names are similar to prevent near-duplicates."""
+    name1 = name1.lower()
+    name2 = name2.lower()
+    
+    # Direct substring check
+    if name1 in name2 or name2 in name1:
+        return True
+    
+    # Remove common prefixes/suffixes and compare
+    common_prefixes = ['is_', 'has_', 'was_', 'user_', 'customer_', 'account_']
+    common_suffixes = ['_id', '_name', '_date', '_time', '_timestamp', '_count', '_total']
+    
+    for prefix in common_prefixes:
+        name1 = name1[len(prefix):] if name1.startswith(prefix) else name1
+        name2 = name2[len(prefix):] if name2.startswith(prefix) else name2
+    
+    for suffix in common_suffixes:
+        name1 = name1[:-len(suffix)] if name1.endswith(suffix) else name1
+        name2 = name2[:-len(suffix)] if name2.endswith(suffix) else name2
+    
+    # If the core parts are very similar
+    return name1 == name2 or \
+           (len(name1) > 3 and len(name2) > 3 and \
+            (name1 in name2 or name2 in name1))
 
 @router.post("/create")
 async def create_domain(
@@ -891,12 +917,39 @@ async def extend_domain(request: Request):
         ai_suggested_columns = []
         duplicates_skipped = []
         
+        # Enhanced duplicate checking - case insensitive and with detailed reporting
+        duplicate_details = []
+        
         # Process user-provided columns first
         if user_provided_columns:
+            existing_column_map = {col.lower(): col for col in existing_column_names}
+            
             for column_name in user_provided_columns:
-                if column_name.lower() in [col.lower() for col in existing_column_names]:
+                column_lower = column_name.lower()
+                if column_lower in existing_column_map:
+                    # Store detailed duplicate information
+                    duplicate_details.append({
+                        "requested_column": column_name,
+                        "existing_column": existing_column_map[column_lower],
+                        "reason": "Column already exists in the domain",
+                        "suggestion": "Use a different column name or skip if the same field"
+                    })
                     duplicates_skipped.append(column_name)
                     continue
+                
+                # Check for similar names to prevent near-duplicates
+                similar_columns = [
+                    existing for existing in existing_column_names 
+                    if _is_similar_column_name(column_name, existing)
+                ]
+                if similar_columns:
+                    # Store warning about similar column names
+                    duplicate_details.append({
+                        "requested_column": column_name,
+                        "similar_existing_columns": similar_columns,
+                        "reason": "Similar column names found",
+                        "suggestion": "Verify if these columns serve different purposes"
+                    })
                 
                 # Create basic column structure for user-provided columns
                 user_column = {
@@ -908,6 +961,22 @@ async def extend_domain(request: Request):
                 }
                 new_columns.append(user_column)
                 user_columns_added.append(column_name)
+            
+            # If all columns were duplicates, return detailed error
+            if len(duplicates_skipped) == len(user_provided_columns):
+                return JSONResponse({
+                    "error": "All provided columns already exist",
+                    "status": "error",
+                    "message": "Cannot extend domain - all requested columns are duplicates",
+                    "domain": domain_name,
+                    "duplicate_details": duplicate_details,
+                    "existing_columns": existing_column_names,
+                    "suggestions": [
+                        "Use different column names",
+                        "Check existing columns first",
+                        "Use /api/aips/domains/suggest-extend-schema for suggestions"
+                    ]
+                }, status_code=400)
         
         # Generate AI suggestions if requested or if no user columns provided
         if suggest_additional or (not user_provided_columns and not extension_preferences.get("no_ai_suggestions", False)):
