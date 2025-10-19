@@ -12,7 +12,7 @@ router = APIRouter(prefix="/api/aips/domains", tags=["domain-schema"])
 
 # --- Domain & Schema Endpoints ---
 
-# Helper function
+# Helper functions
 _store = None
 def get_store() -> OpenSearchColumnStore:
     global _store
@@ -24,6 +24,32 @@ def get_store() -> OpenSearchColumnStore:
             logger.error(f" Failed to initialize OpenSearch store: {e}")
             return None
     return _store
+
+def _is_similar_column_name(name1: str, name2: str) -> bool:
+    """Check if two column names are similar to prevent near-duplicates."""
+    name1 = name1.lower()
+    name2 = name2.lower()
+    
+    # Direct substring check
+    if name1 in name2 or name2 in name1:
+        return True
+    
+    # Remove common prefixes/suffixes and compare
+    common_prefixes = ['is_', 'has_', 'was_', 'user_', 'customer_', 'account_']
+    common_suffixes = ['_id', '_name', '_date', '_time', '_timestamp', '_count', '_total']
+    
+    for prefix in common_prefixes:
+        name1 = name1[len(prefix):] if name1.startswith(prefix) else name1
+        name2 = name2[len(prefix):] if name2.startswith(prefix) else name2
+    
+    for suffix in common_suffixes:
+        name1 = name1[:-len(suffix)] if name1.endswith(suffix) else name1
+        name2 = name2[:-len(suffix)] if name2.endswith(suffix) else name2
+    
+    # If the core parts are very similar
+    return name1 == name2 or \
+           (len(name1) > 3 and len(name2) > 3 and \
+            (name1 in name2 or name2 in name1))
 
 @router.post("/create")
 async def create_domain(
@@ -656,6 +682,7 @@ async def regenerate_suggestions(request: Request):
     """
     AI-powered domain schema suggestions. User only needs to provide 'domain'.
     LLM will generate business description and preferences automatically.
+    Will avoid suggesting columns that already exist in the domain.
     """
     try:
         body = await request.json()
@@ -665,13 +692,35 @@ async def regenerate_suggestions(request: Request):
                 "error": "Missing required field: 'domain'"
             }, status_code=400)
 
-        # Use LLM to generate business description and preferences
-        # For now, use a generic prompt based on domain name
-        business_description = f"Generate a schema for the business domain '{domain}'. Suggest columns relevant to this domain."
+        # Get existing columns if domain exists
+        store = get_store()
+        existing_columns = []
+        if store:
+            try:
+                domain_check = store.check_domain_exists_case_insensitive(domain)
+                if domain_check["exists"]:
+                    existing_domain = domain_check["existing_domain"]
+                    existing_columns_data = store.get_columns_by_domain(existing_domain)
+                    existing_columns = [col.get("column_name") for col in existing_columns_data]
+                    logger.info(f"Found existing domain '{existing_domain}' with {len(existing_columns)} columns")
+            except Exception as e:
+                logger.warning(f"Failed to check existing columns: {e}")
+
+        # Enhanced business description with context about existing columns
+        if existing_columns:
+            business_description = f"""Generate additional schema columns for the business domain '{domain}'.
+Existing columns: {', '.join(existing_columns)}
+Suggest NEW columns that complement the existing ones while avoiding duplication.
+Focus on identifying missing business dimensions and valuable extensions to the current schema."""
+        else:
+            business_description = f"Generate a schema for the business domain '{domain}'. Suggest columns relevant to this domain."
+
+        # Include existing columns in preferences to avoid duplicates
         user_preferences = {
             "style": "standard",
             "column_count": 8,
-            "iteration": 1
+            "iteration": 1,
+            "exclude_columns": existing_columns  # This ensures we don't suggest existing columns
         }
 
         from app.agents.schema_suggester import SchemaSuggesterEnhanced
@@ -684,40 +733,102 @@ async def regenerate_suggestions(request: Request):
         # Extract column names from enhanced_schema
         suggested_columns = [col.get("column_name") for col in enhanced_schema.get("columns", [])]
 
-        return JSONResponse({
-            "domain": domain,
-            "suggested_columns": suggested_columns,
-            "actions": {
-                "note": "Column names only suggested. Data types will be inferred from actual CSV data.",
-                "create_schema_with_csv": {
-                    "description": "Use suggested column names to create schema from CSV",
-                    "endpoint": "/api/aips/domains/create",
-                    "method": "POST",
-                    "payload": {
-                        "domain": domain,
-                        "columns": suggested_columns,
-                        "return_csv": True
+        # Determine if domain exists and prepare appropriate actions
+        domain_exists = False
+        existing_domain_name = domain
+        if store:
+            try:
+                domain_check = store.check_domain_exists_case_insensitive(domain)
+                if domain_check["exists"]:
+                    domain_exists = True
+                    existing_domain_name = domain_check["existing_domain"]
+            except Exception as e:
+                logger.warning(f"Failed to check domain existence: {e}")
+
+        if domain_exists:
+            # Domain exists - suggest extend-schema actions
+            return JSONResponse({
+                "domain": existing_domain_name,
+                "suggested_columns": suggested_columns,
+                "domain_status": "exists",
+                "actions": {
+                    "note": "Additional columns suggested for existing domain. These will extend the current schema.",
+                    "extend_schema_with_csv": {
+                        "description": "Extend existing schema with suggested columns and generate CSV",
+                        "endpoint": "/api/aips/domains/extend-schema",
+                        "method": "PUT",
+                        "payload": {
+                            "domain": existing_domain_name,
+                            "columns": suggested_columns,
+                            "extension_preferences": {
+                                "column_count": len(suggested_columns),
+                                "style": "standard",
+                                "focus_area": "business enhancement"
+                            },
+                            "return_csv": True
+                        }
+                    },
+                    "extend_schema_only": {
+                        "description": "Extend existing schema with suggested columns",
+                        "endpoint": "/api/aips/domains/extend-schema",
+                        "method": "PUT",
+                        "payload": {
+                            "domain": existing_domain_name,
+                            "columns": suggested_columns,
+                            "extension_preferences": {
+                                "column_count": len(suggested_columns),
+                                "style": "standard",
+                                "focus_area": "business enhancement"
+                            },
+                            "return_csv": False
+                        }
                     }
                 },
-                "create_schema_only": {
-                    "description": "Use suggested column names to create schema",
-                    "endpoint": "/api/aips/domains/create",
-                    "method": "POST",
-                    "payload": {
-                        "domain": domain,
-                        "columns": suggested_columns,
-                        "return_csv": False
-                    }
+                "next_steps": {
+                    "after_confirmation": [
+                        "New columns will be added to existing schema",
+                        "Optional: Download updated CSV template",
+                        "Call /api/aips/domains/extend-schema to extend the domain"
+                    ]
                 }
-            },
-            "next_steps": {
-                "after_confirmation": [
-                    "Schema will be saved to vector database",
-                    "Optional: Download sample CSV data",
-                    "Call /api/aips/domains/create"
-                ]
-            }
-        })
+            })
+        else:
+            # New domain - suggest create actions
+            return JSONResponse({
+                "domain": domain,
+                "suggested_columns": suggested_columns,
+                "domain_status": "new",
+                "actions": {
+                    "note": "Column names only suggested. Data types will be inferred from actual CSV data.",
+                    "create_schema_with_csv": {
+                        "description": "Use suggested column names to create schema from CSV",
+                        "endpoint": "/api/aips/domains/create",
+                        "method": "POST",
+                        "payload": {
+                            "domain": domain,
+                            "columns": suggested_columns,
+                            "return_csv": True
+                        }
+                    },
+                    "create_schema_only": {
+                        "description": "Use suggested column names to create schema",
+                        "endpoint": "/api/aips/domains/create",
+                        "method": "POST",
+                        "payload": {
+                            "domain": domain,
+                            "columns": suggested_columns,
+                            "return_csv": False
+                        }
+                    }
+                },
+                "next_steps": {
+                    "after_confirmation": [
+                        "Schema will be saved to vector database",
+                        "Optional: Download sample CSV data",
+                        "Call /api/aips/domains/create to create new domain"
+                    ]
+                }
+            })
     except Exception as e:
         logger.error(f"Error in regenerate suggestions: {str(e)}")
         return JSONResponse({
@@ -806,12 +917,39 @@ async def extend_domain(request: Request):
         ai_suggested_columns = []
         duplicates_skipped = []
         
+        # Enhanced duplicate checking - case insensitive and with detailed reporting
+        duplicate_details = []
+        
         # Process user-provided columns first
         if user_provided_columns:
+            existing_column_map = {col.lower(): col for col in existing_column_names}
+            
             for column_name in user_provided_columns:
-                if column_name.lower() in [col.lower() for col in existing_column_names]:
+                column_lower = column_name.lower()
+                if column_lower in existing_column_map:
+                    # Store detailed duplicate information
+                    duplicate_details.append({
+                        "requested_column": column_name,
+                        "existing_column": existing_column_map[column_lower],
+                        "reason": "Column already exists in the domain",
+                        "suggestion": "Use a different column name or skip if the same field"
+                    })
                     duplicates_skipped.append(column_name)
                     continue
+                
+                # Check for similar names to prevent near-duplicates
+                similar_columns = [
+                    existing for existing in existing_column_names 
+                    if _is_similar_column_name(column_name, existing)
+                ]
+                if similar_columns:
+                    # Store warning about similar column names
+                    duplicate_details.append({
+                        "requested_column": column_name,
+                        "similar_existing_columns": similar_columns,
+                        "reason": "Similar column names found",
+                        "suggestion": "Verify if these columns serve different purposes"
+                    })
                 
                 # Create basic column structure for user-provided columns
                 user_column = {
@@ -823,6 +961,22 @@ async def extend_domain(request: Request):
                 }
                 new_columns.append(user_column)
                 user_columns_added.append(column_name)
+            
+            # If all columns were duplicates, return detailed error
+            if len(duplicates_skipped) == len(user_provided_columns):
+                return JSONResponse({
+                    "error": "All provided columns already exist",
+                    "status": "error",
+                    "message": "Cannot extend domain - all requested columns are duplicates",
+                    "domain": domain_name,
+                    "duplicate_details": duplicate_details,
+                    "existing_columns": existing_column_names,
+                    "suggestions": [
+                        "Use different column names",
+                        "Check existing columns first",
+                        "Use /api/aips/domains/suggest-extend-schema for suggestions"
+                    ]
+                }, status_code=400)
         
         # Generate AI suggestions if requested or if no user columns provided
         if suggest_additional or (not user_provided_columns and not extension_preferences.get("no_ai_suggestions", False)):
@@ -1091,7 +1245,3 @@ async def suggest_extensions(domain_name: str, request: Request):
             "error": str(e),
             "message": f"Failed to suggest extensions for domain '{domain_name}'"
         }, status_code=500)
-
-
-
-
