@@ -305,7 +305,7 @@ def main():
         choice = input("Enter choice (1 or 2, default=1): ").strip()
         
         if choice == "2":
-            print("🗑️  Deleting verified messages...")
+            print("  Deleting verified messages...")
             for message in messages:
                 success = verifier.delete_message(message['receipt_handle'])
                 if success:
