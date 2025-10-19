@@ -20,8 +20,17 @@ def load_environment_config():
     """
     Load env based on APP_ENV.
     Priority: Existing ENV vars -> .env.{APP_ENV} -> .env.development -> .env
+    Environment mapping:
+    - 'prd' -> 'production'
     """
     app_env = os.getenv("APP_ENV", "development")
+    
+    # Map environment names
+    env_mapping = {
+        "prd": "production"
+    }
+    app_env = env_mapping.get(app_env, app_env)
+    
     env_file_path = f".env.{app_env}"
 
     logger.info(" Initializing environment: %s", app_env)

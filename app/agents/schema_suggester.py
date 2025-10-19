@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 class SchemaGenerationConfig:
     """Configuration for schema generation"""
     min_columns: int = 5
-    max_columns: int = 11
+    max_columns: int = 20
     min_samples: int = 3
     max_retries: int = 3
     timeout_seconds: int = 30
