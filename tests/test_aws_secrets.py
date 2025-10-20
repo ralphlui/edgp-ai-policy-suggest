@@ -1,12 +1,30 @@
 #!/usr/bin/env python3
 """
-AWS Secrets Manager Test for EDGP AI Policy Suggest
-This Python script tests the AWS Secrets Manager integration
+AWS Secrets Manager Tests for EDGP AI Policy Suggest
+This module contains both unit tests and integration tests for AWS Secrets Manager
 """
 import os
 import sys
+import json
 import logging
 from pathlib import Path
+from unittest import mock
+from unittest.mock import MagicMock, patch
+import pytest
+from botocore.exceptions import ClientError, BotoCoreError
+
+from app.aws.aws_secrets_service import (
+    AWSSecretsManagerService,
+    CredentialManager,
+    _format_jwt_public_key,
+    _get_config_value,
+    _get_openai_secret_name,
+    _get_aws_region,
+    get_openai_api_key,
+    get_jwt_public_key,
+    require_openai_api_key,
+    require_jwt_public_key
+)
 
 # Add the project root to Python path
 project_root = Path(__file__).parent
@@ -19,10 +37,279 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Unit Tests
+@pytest.mark.unit
+def test_get_config_value():
+    with patch.dict(os.environ, {"TEST_KEY": "test_value"}):
+        assert _get_config_value("TEST_KEY", "default") == "test_value"
+        assert _get_config_value("NONEXISTENT_KEY", "default") == "default"
+
+@pytest.mark.unit
+def test_get_openai_secret_name():
+    with patch.dict(os.environ, {"OPENAI_SECRET_NAME": "custom_secret"}):
+        assert _get_openai_secret_name() == "custom_secret"
+    with patch.dict(os.environ, clear=True):
+        assert _get_openai_secret_name() == "sit/edgp/secret"
+
+@pytest.mark.unit
+def test_get_aws_region():
+    with patch.dict(os.environ, {"AWS_REGION": "us-west-2"}):
+        assert _get_aws_region() == "us-west-2"
+    with patch.dict(os.environ, clear=True):
+        assert _get_aws_region() == "ap-southeast-1"
+
+@pytest.mark.unit
+def test_format_jwt_public_key():
+    # Test with already formatted key
+    formatted_key = """-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA
+-----END PUBLIC KEY-----"""
+    assert _format_jwt_public_key(formatted_key) == formatted_key
+
+    # Test with raw key
+    raw_key = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA"
+    expected = f"-----BEGIN PUBLIC KEY-----\n{raw_key}\n-----END PUBLIC KEY-----"
+    assert _format_jwt_public_key(raw_key) == expected
+
+    # Test with empty input
+    assert _format_jwt_public_key("") == ""
+    assert _format_jwt_public_key(None) == None
+
+@pytest.mark.unit
+class TestAWSSecretsManagerService:
+    @pytest.fixture
+    def aws_service(self):
+        mock_client = MagicMock()
+        with patch('boto3.session.Session') as mock_session:
+            mock_session.return_value.client.return_value = mock_client
+            with patch.dict(os.environ, {
+                'AWS_ACCESS_KEY_ID': 'test_key',
+                'AWS_SECRET_ACCESS_KEY': 'test_secret',
+                'AWS_REGION': 'us-west-2'
+            }):
+                service = AWSSecretsManagerService(region_name="us-west-2")
+                service._client = mock_client
+                return service, mock_client
+
+    def test_client_initialization(self, aws_service):
+        service, mock_client = aws_service
+        assert service.client == mock_client
+
+    def test_client_initialization_no_region(self):
+        with patch.dict(os.environ, clear=True):
+            with patch("boto3.session.Session") as mock_session:
+                mock_session.return_value.client.side_effect = Exception("Failed to create client")
+                service = AWSSecretsManagerService(region_name=None)
+                assert service.get_secret("test_secret") is None
+
+    def test_client_initialization_failure(self):
+        with patch('boto3.session.Session') as mock_session:
+            mock_session.side_effect = Exception("Failed to create session")
+            service = AWSSecretsManagerService(region_name="us-west-2")
+            assert service.get_secret("test_secret") is None
+
+    def test_get_secret_parse_error(self, aws_service):
+        service, mock_client = aws_service
+        mock_client.get_secret_value.return_value = {
+            "SecretString": "invalid json {"
+        }
+        assert service.get_secret("test_secret") == "invalid json {"
+        
+    def test_get_secret_with_empty_response(self, aws_service):
+        service, mock_client = aws_service
+        mock_client.get_secret_value.return_value = {}
+        assert service.get_secret("test_secret") is None
+
+    def test_get_secret_string(self, aws_service):
+        service, mock_client = aws_service
+        mock_client.get_secret_value.return_value = {
+            "SecretString": '{"api_key": "test_key"}'
+        }
+        assert service.get_secret("test_secret") == "test_key"
+
+    def test_get_secret_with_key(self, aws_service):
+        service, mock_client = aws_service
+        mock_client.get_secret_value.return_value = {
+            "SecretString": '{"custom_key": "test_value"}'
+        }
+        assert service.get_secret("test_secret", "custom_key") == "test_value"
+
+    def test_get_secret_binary(self, aws_service):
+        service, mock_client = aws_service
+        mock_client.get_secret_value.return_value = {
+            "SecretBinary": b"test_binary"
+        }
+        assert service.get_secret("test_secret") == "test_binary"
+
+    def test_get_secret_client_errors(self, aws_service):
+        service, mock_client = aws_service
+        error_codes = [
+            "DecryptionFailureException",
+            "InternalServiceErrorException",
+            "InvalidParameterException",
+            "InvalidRequestException",
+            "ResourceNotFoundException",
+            "UnrecognizedClientException",
+            "AccessDeniedException",
+            "UnknownError"
+        ]
+        
+        for code in error_codes:
+            error_response = {
+                "Error": {
+                    "Code": code,
+                    "Message": f"{code} error message"
+                }
+            }
+            mock_client.get_secret_value.side_effect = ClientError(error_response, "GetSecretValue")
+            assert service.get_secret("test_secret") is None
+
+    def test_get_secret_boto_error(self, aws_service):
+        service, mock_client = aws_service
+        mock_client.get_secret_value.side_effect = BotoCoreError()
+        assert service.get_secret("test_secret") is None
+
+@pytest.mark.unit
+class TestCredentialManager:
+    @pytest.fixture
+    def credential_manager(self):
+        mock_aws_service = MagicMock()
+        mock_aws_service.get_secret.return_value = None
+        return CredentialManager(mock_aws_service), mock_aws_service
+
+    def test_load_credentials_from_env(self, credential_manager):
+        manager, _ = credential_manager
+        with patch.dict(os.environ, {
+            "OPENAI_API_KEY": "test_key",
+            "JWT_PUBLIC_KEY": "test_jwt_key"
+        }):
+            manager.load_credentials()
+            assert manager.get_openai_api_key() == "test_key"
+            assert manager.get_jwt_public_key() == _format_jwt_public_key("test_jwt_key")
+
+    def test_load_credentials_from_aws(self, credential_manager):
+        manager, mock_aws_service = credential_manager
+        mock_aws_service.get_secret.side_effect = [
+            "aws_openai_key",  # First call for OpenAI key
+            "aws_jwt_key"      # Second call for JWT key
+        ]
+        
+        with patch.dict(os.environ, clear=True):
+            manager.load_credentials()
+            assert manager.get_openai_api_key() == "aws_openai_key"
+            assert manager.get_jwt_public_key() == _format_jwt_public_key("aws_jwt_key")
+
+    def test_load_credentials_aws_failure(self, credential_manager):
+        manager, mock_aws_service = credential_manager
+        mock_aws_service.get_secret.side_effect = Exception("AWS error")
+        
+        with patch.dict(os.environ, clear=True):
+            manager.load_credentials()
+            assert manager.get_openai_api_key() is None
+            assert manager.get_jwt_public_key() is None
+
+    def test_load_credentials_with_custom_secret_name(self, credential_manager):
+        manager, mock_aws_service = credential_manager
+        custom_secret = "custom_secret_name"
+        mock_aws_service.get_secret.side_effect = [
+            None,  # First attempt with ai_agent_api_key
+            None,  # Second attempt with openai_api_key
+            None,  # Third attempt with jwt_public_key
+            None,  # Fourth attempt with all keys
+        ]
+        
+        with patch.dict(os.environ, clear=True):
+            manager.load_credentials(secret_name=custom_secret)
+            # Check if get_secret was called with the correct secret name and keys
+            calls = mock_aws_service.get_secret.call_args_list
+            assert len(calls) >= 2  # Should have at least tried both key formats
+            assert mock.call(custom_secret, "ai_agent_api_key") in calls
+            assert mock.call(custom_secret) in calls
+
+    def test_require_openai_api_key_missing(self, credential_manager):
+        manager, mock_aws_service = credential_manager
+        mock_aws_service.get_secret.return_value = None
+        
+        with patch.dict(os.environ, clear=True):
+            manager.load_credentials()
+            with pytest.raises(RuntimeError) as exc_info:
+                manager.require_openai_api_key()
+            assert "OpenAI API key is required but not available" in str(exc_info.value)
+
+    def test_require_jwt_public_key_missing(self, credential_manager):
+        manager, mock_aws_service = credential_manager
+        mock_aws_service.get_secret.return_value = None
+        
+        with patch.dict(os.environ, clear=True):
+            manager.load_credentials()
+            with pytest.raises(RuntimeError) as exc_info:
+                manager.require_jwt_public_key()
+            assert "JWT public key is required but not available" in str(exc_info.value)
+
+    def test_get_credentials_status(self, credential_manager):
+        manager, _ = credential_manager
+        with patch.dict(os.environ, {
+            "OPENAI_API_KEY": "test_key",
+            "JWT_PUBLIC_KEY": "test_jwt_key"
+        }):
+            manager.load_credentials()
+            status = manager.get_credentials_status()
+            assert status["openai_api_key_available"] is True
+            assert status["jwt_public_key_available"] is True
+            assert status["credentials_loaded"] is True
+
+    def test_force_reload(self, credential_manager):
+        manager, mock_aws_service = credential_manager
+        mock_aws_service.get_secret.side_effect = [
+            "first_key",   # First load OpenAI key
+            None,         # First load JWT key
+            "second_key", # Force reload OpenAI key
+            None         # Force reload JWT key
+        ]
+        
+        with patch.dict(os.environ, clear=True):
+            # First load
+            manager.load_credentials()
+            assert manager.get_openai_api_key() == "first_key"
+            
+            # Force reload
+            manager.load_credentials(force_reload=True)
+            assert manager.get_openai_api_key() == "second_key"
+
+# Test global helper functions
+@pytest.mark.unit
+def test_global_helper_functions():
+    # Test all global helper functions with environment variables
+    test_api_key = "global-test-key"
+    test_jwt_key = "global-jwt-key"
+    
+    # Create a mock AWS service
+    mock_aws_service = MagicMock()
+    mock_aws_service.get_secret.return_value = None  # Ensure it falls back to env vars
+    
+    # Create a test credential manager
+    test_credential_manager = CredentialManager(mock_aws_service)
+    
+    # Patch the global credential manager
+    with patch('app.aws.aws_secrets_service._credential_manager', test_credential_manager):
+        with patch.dict(os.environ, {
+            "OPENAI_API_KEY": test_api_key,
+            "JWT_PUBLIC_KEY": test_jwt_key
+        }, clear=True):  # Clear=True to ensure no other env vars interfere
+            # Load credentials to initialize the manager
+            test_credential_manager.load_credentials()
+            
+            # Test getters
+            assert get_openai_api_key() == test_api_key
+            assert get_jwt_public_key() == _format_jwt_public_key(test_jwt_key)
+            
+            # Test requirers
+            assert require_openai_api_key() == test_api_key
+            assert require_jwt_public_key() == _format_jwt_public_key(test_jwt_key)
+
+# Integration Tests
+@pytest.mark.integration
 def test_aws_secrets_integration():
-    """Test AWS Secrets Manager integration"""
-    print(" Testing AWS Secrets Manager Integration")
-    print("=" * 50)
     
     try:
         # Test importing the configuration
