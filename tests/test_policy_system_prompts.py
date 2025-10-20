@@ -488,42 +488,33 @@ class TestMainModuleExecution:
             assert len(truncated) <= 203  # 200 chars + "..."
     
     @patch('builtins.print')
-    @patch('sys.argv', ['policy_system_prompts.py'])
     def test_main_block_execution(self, mock_print):
         """Test the actual main block execution"""
-        import importlib
-        import sys
-        import os
+        from app.prompt.policy_system_prompts import main
         
-        # Add the app directory to path if not already there
-        app_path = os.path.join(os.path.dirname(__file__), '..', 'app', 'prompt')
-        if app_path not in sys.path:
-            sys.path.insert(0, app_path)
+        # Call the main function
+        main()
         
-        try:
-            # This will execute the if __name__ == "__main__" block
-            import runpy
-            # We can't easily test the main block directly, but we can verify 
-            # the code structure that would be executed
-            from app.prompt.policy_system_prompts import get_enhanced_prompts
-            
-            prompts = get_enhanced_prompts()
-            
-            # Simulate what the main block does
-            for name, prompt in prompts.items():
-                display_name = name.upper().replace('_', ' ') + " PROMPT:"
-                truncated = prompt[:200] + "..." if len(prompt) > 200 else prompt
-                length_info = f"Length: {len(prompt)} characters"
-                
-                # These operations should work without error
-                assert isinstance(display_name, str)
-                assert isinstance(truncated, str)
-                assert isinstance(length_info, str)
-                assert len(prompt) > 0
-        finally:
-            # Clean up path
-            if app_path in sys.path:
-                sys.path.remove(app_path)
+        # Verify print was called with expected values
+        calls = mock_print.call_args_list
+        printed_text = [str(call[0][0]) for call in calls]
+        
+        # Check header
+        assert " Policy System Prompts for AI Policy Suggest" in printed_text[0]
+        assert "=" * 60 in printed_text[1]
+        
+        # Each prompt should have a header, line, truncated content and length
+        expected_prompts = ["RULE GENERATION", "SCHEMA DESIGN", "COLUMN SUGGESTION", "DOMAIN EXTENSION"]
+        for name in expected_prompts:
+            header_found = False
+            length_found = False
+            for text in printed_text:
+                if f" {name} PROMPT:" in text:
+                    header_found = True
+                if "Length:" in text and "characters" in text:
+                    length_found = True
+            assert header_found, f"Could not find header for {name}"
+            assert length_found, f"Could not find length info for {name}"
     
     def test_module_imports_successfully(self):
         """Test that all module imports work correctly"""
@@ -560,6 +551,37 @@ class TestEdgeCases:
         assert "émojis 🚀" in result
         assert "símböls" in result
         assert "technical implementation" in result
+    
+    def test_get_role_specific_prompt_with_none_prompt(self):
+        """Test that None prompt is handled gracefully"""
+        result = get_role_specific_prompt("data_engineer", None)
+        # The function converts None to string 'None' and adds role-specific focus
+        assert "None" in result
+        assert "technical implementation" in result  # Role-specific part should be added
+    
+    def test_get_role_specific_prompt_malformed_input(self):
+        """Test handling of malformed input"""
+        result = get_role_specific_prompt(123, "test")  # Wrong type for role
+        assert result == "test"  # Should return original prompt
+        
+        result = get_role_specific_prompt("data_engineer", 123)  # Wrong type for prompt
+        assert isinstance(result, str)  # Should convert to string
+        
+def test_main_function(capsys):
+    """Test the main function"""
+    from app.prompt.policy_system_prompts import main
+    
+    # Call main which should print some output
+    main()
+    
+    # Capture the output
+    captured = capsys.readouterr()
+    
+    # Verify output contains expected prompts
+    assert "RULE GENERATION PROMPT" in captured.out
+    assert "SCHEMA DESIGN PROMPT" in captured.out
+    assert "COLUMN SUGGESTION PROMPT" in captured.out
+    assert "DOMAIN EXTENSION PROMPT" in captured.out
     
     def test_get_role_specific_prompt_with_very_long_prompt(self):
         """Test with extremely long base prompt"""

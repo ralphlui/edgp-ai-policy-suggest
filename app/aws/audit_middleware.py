@@ -8,10 +8,14 @@ import time
 import json
 import logging
 import jwt
+import os
 from typing import Callable, Optional
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
+from fastapi.responses import StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp, Receive, Scope, Send, Message
+from starlette.middleware.base import RequestResponseEndpoint
 from app.aws.audit_models import AuditLogDTO, AuditContext, ActivityType, ResponseStatus, endpoint_activity_mapping, get_activity_info
 from app.aws.audit_service import send_audit_log_async, log_audit_locally
 import asyncio
@@ -30,7 +34,8 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
                  excluded_paths: Optional[list] = None,
                  log_request_body: bool = True,
                  log_response_body: bool = False,
-                 max_body_size: int = 10000):
+                 max_body_size: int = 10000,
+                 test_mode: bool = False):
         super().__init__(app)
         self.excluded_paths = excluded_paths or [
             "/health", 
@@ -42,56 +47,68 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
         self.log_request_body = log_request_body
         self.log_response_body = log_response_body
         self.max_body_size = max_body_size
+        self.test_mode = test_mode
     
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        # Skip audit logging for excluded paths
-        if any(request.url.path.startswith(path) for path in self.excluded_paths):
-            return await call_next(request)
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        """Middleware dispatcher for audit logging."""
+        logger = logging.getLogger(__name__)
+        logger.debug("Starting audit middleware dispatch")
         
-        # Generate unique request ID for tracking
-        request_id = str(uuid.uuid4())
         start_time = time.time()
-        
-        # Capture request details
-        audit_context = await self._build_audit_context(request, request_id)
-        
         try:
-            # Process the request
             response = await call_next(request)
+            process_time = time.time() - start_time
+
+            logger.debug("Extracting user information from request")
+            user_id = await self._extract_user_id(request)
+            user_name = await self._extract_user_name(request)
+            logger.debug(f"Extracted user_id: {user_id}, user_name: {user_name}")
             
-            # Calculate processing time
-            processing_time = time.time() - start_time
+            request_id = str(uuid.uuid4())
+            audit_context = await self._build_audit_context(request, request_id)
             
-            # Create audit log
-            await self._create_audit_log(
-                request, 
-                response, 
-                audit_context, 
-                processing_time,
-                success=True
-            )
-            
-            return response
-            
+            if isinstance(response, StreamingResponse):
+                # For streaming responses, we can't modify the body
+                await self._create_audit_log(
+                    request, response, audit_context, process_time,
+                    success=True
+                )
+                return response
+            else:
+                # For regular responses, we need to read the body for audit logging
+                response_body = [section async for section in response.body_iterator]
+                response = Response(
+                    content=b"".join(response_body),
+                    status_code=response.status_code,
+                    headers=dict(response.headers)
+                )
+                
+                await self._create_audit_log(
+                    request, response, audit_context, process_time,
+                    success=True
+                )
+                return response
+                
         except Exception as e:
-            # Log failed requests
-            processing_time = time.time() - start_time
+            # Log the error and create error audit log
+            logger.error(f"Error in middleware: {str(e)}")
+            process_time = time.time() - start_time
             
             error_response = JSONResponse(
                 status_code=500,
-                content={"error": "Internal server error", "request_id": request_id}
+                content={"detail": "Internal server error"}
             )
             
+            if 'audit_context' not in locals():
+                request_id = str(uuid.uuid4())
+                audit_context = await self._build_audit_context(request, request_id)
+            
             await self._create_audit_log(
-                request, 
-                error_response, 
-                audit_context, 
-                processing_time,
+                request, error_response, audit_context, process_time,
                 success=False,
                 error_message=str(e)
             )
-            
-            raise e
+            return error_response
     
     async def _build_audit_context(self, request: Request, request_id: str) -> AuditContext:
         """Build audit context from request"""
@@ -119,41 +136,63 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
             # Check for Authorization header
             auth_header = request.headers.get("Authorization")
             if not auth_header or not auth_header.startswith("Bearer "):
+                logger.debug("No Bearer token found in request")
                 return None
             
             # Extract token
             token = auth_header.replace("Bearer ", "").strip()
             
-            # Decode JWT token (without verification for audit purposes)
-            # In production, you should verify the token with proper secret/key
             try:
-                # Decode without verification to extract claims for audit
-                payload = jwt.decode(token, options={"verify_signature": False})
+                # If in test mode, decode with HS256 and test secret
+                if self.test_mode:
+                    logger.info("In test mode, using HS256 for JWT validation")
+                    test_secret = os.environ["JWT_TEST_SECRET"]
+                    logger.info(f"JWT_TEST_SECRET in middleware: {test_secret}")
+                    payload = jwt.decode(
+                        token,
+                        test_secret,
+                        algorithms=["HS256"],
+                        options={
+                            "verify_signature": True,
+                            "verify_exp": True,
+                            "verify_iat": True,
+                            "verify_aud": False,  # Don't verify audience in tests
+                            "verify_iss": False,  # Don't verify issuer in tests
+                            "require": ["exp", "iat", "userEmail", "scope", "sub"]
+                        }
+                    )
+                    logger.info(f"Successfully decoded token payload: {payload}")
+                else:
+                    logger.info("Not in test mode, using RSA JWT validation")
+                    # Use the proper token validator for secure JWT verification
+                    from app.auth.authentication import get_token_validator
+                    token_validator = get_token_validator()
+                    payload = token_validator.decode_token(token)
                 
                 # Extract user ID from 'sub' claim (standard JWT claim)
                 user_id = payload.get("sub")
                 if user_id:
-                    logger.debug(f"Extracted user ID from JWT: {user_id}")
+                    logger.info(f"Extracted user ID from JWT: {user_id}")
                     return str(user_id)
                 
                 # Fallback to other possible user ID fields
                 user_id = payload.get("user_id") or payload.get("userId")
                 if user_id:
-                    logger.debug(f"Extracted user ID from alternative field: {user_id}")
+                    logger.info(f"Extracted user ID from alternative field: {user_id}")
                     return str(user_id)
                 
-                logger.debug("No user ID found in JWT token")
+                logger.warning("No user ID found in JWT token")
                 return None
                 
-            except jwt.DecodeError:
-                logger.debug("Invalid JWT token format")
+            except jwt.DecodeError as e:
+                logger.error(f"Invalid JWT token format: {e}")
                 return None
             except Exception as e:
-                logger.debug(f"Error decoding JWT token: {e}")
+                logger.error(f"Error decoding JWT token: {e}")
                 return None
             
         except Exception as e:
-            logger.debug(f"Could not extract user ID: {e}")
+            logger.error(f"Could not extract user ID: {e}")
             return None
     
     async def _extract_user_name(self, request: Request) -> Optional[str]:
@@ -162,44 +201,73 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
             # Check for Authorization header
             auth_header = request.headers.get("Authorization")
             if not auth_header or not auth_header.startswith("Bearer "):
+                logger.debug("No Bearer token found in request")
                 return None
             
             # Extract token
             token = auth_header.replace("Bearer ", "").strip()
             
-            # Decode JWT token (without verification for audit purposes)
             try:
-                # Decode without verification to extract claims for audit
-                payload = jwt.decode(token, options={"verify_signature": False})
+                # If in test mode, decode with HS256 and test secret
+                if self.test_mode:
+                    logger.info("In test mode, using HS256 for JWT validation")
+                    test_secret = os.environ["JWT_TEST_SECRET"]
+                    logger.info(f"JWT_TEST_SECRET in middleware: {test_secret}")
+                    payload = jwt.decode(
+                        token,
+                        test_secret,
+                        algorithms=["HS256"],
+                        options={
+                            "verify_signature": True,
+                            "verify_exp": True,
+                            "verify_iat": True,
+                            "verify_aud": False,  # Don't verify audience in tests
+                            "verify_iss": False,  # Don't verify issuer in tests
+                            "require": ["exp", "iat", "userEmail", "scope", "sub"]
+                        }
+                    )
+                    logger.info(f"Successfully decoded token payload: {payload}")
+                else:
+                    logger.info("Not in test mode, using RSA JWT validation")
+                    # Use the proper token validator for secure JWT verification
+                    from app.auth.authentication import get_token_validator
+                    token_validator = get_token_validator()
+                    payload = token_validator.decode_token(token)
+                
+                # Try to get username from userEmail first (used in tests)
+                username = payload.get("userEmail")
+                if username:
+                    logger.info(f"Extracted username from userEmail: {username}")
+                    return str(username)
                 
                 # Extract username from standard claims
                 username = payload.get("username")
                 if username:
-                    logger.debug(f"Extracted username from JWT: {username}")
+                    logger.info(f"Extracted username from JWT: {username}")
                     return str(username)
                 
                 # Fallback to other possible username fields
                 username = (payload.get("preferred_username") or 
-                           payload.get("name") or 
-                           payload.get("email") or
-                           payload.get("userName"))
+                          payload.get("name") or 
+                          payload.get("email") or
+                          payload.get("userName"))
                 
                 if username:
-                    logger.debug(f"Extracted username from alternative field: {username}")
+                    logger.info(f"Extracted username from alternative field: {username}")
                     return str(username)
                 
-                logger.debug("No username found in JWT token")
+                logger.warning("No username found in JWT token")
                 return None
                 
-            except jwt.DecodeError:
-                logger.debug("Invalid JWT token format")
+            except jwt.DecodeError as e:
+                logger.error(f"Invalid JWT token format: {e}")
                 return None
             except Exception as e:
-                logger.debug(f"Error decoding JWT token: {e}")
+                logger.error(f"Error decoding JWT token: {e}")
                 return None
             
         except Exception as e:
-            logger.debug(f"Could not extract user name: {e}")
+            logger.error(f"Could not extract user name: {e}")
             return None
     
     def _get_client_ip(self, request: Request) -> str:
@@ -352,16 +420,52 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
                       error_message: Optional[str] = None) -> str:
         """Build simple remarks for audit log"""
         
-        # Determine user context for remarks
+        # User context for remarks
         user_context = "Public user"
         auth_header = request.headers.get("Authorization")
         if auth_header and auth_header.startswith("Bearer "):
             try:
                 token = auth_header.replace("Bearer ", "").strip()
-                payload = jwt.decode(token, options={"verify_signature": False})
-                username = payload.get("username", "authenticated user")
+                if self.test_mode:
+                    # In test mode, use test secret for JWT validation
+                    logger.info("Using test secret for JWT validation")
+                    test_secret = os.environ["JWT_TEST_SECRET"]
+                    payload = jwt.decode(
+                        token,
+                        test_secret,
+                        algorithms=["HS256"],
+                        options={
+                            "verify_signature": True,
+                            "verify_exp": True,
+                            "verify_iat": True,
+                            "verify_aud": False,  # Don't verify audience in tests
+                            "verify_iss": False,  # Don't verify issuer in tests
+                            "require": ["exp", "iat", "userEmail", "scope", "sub"]
+                        }
+                    )
+                else:
+                    # In production mode, use RSA validation
+                    from app.auth.authentication import get_token_validator
+                    token_validator = get_token_validator()
+                    payload = token_validator.decode_token(token)
+                
+                # First try username field
+                username = payload.get("username")
+                if not username:
+                    # Fallback to userEmail, then other fields
+                    username = (
+                        payload.get("userEmail") or 
+                        payload.get("email") or 
+                        payload.get("preferred_username") or
+                        payload.get("sub") or  # Last resort - use ID if no name found
+                        "authenticated user"
+                    )
                 user_context = f"{username}"
-            except:
+            except jwt.InvalidTokenError as e:
+                logger.warning(f"Invalid token in remarks builder: {e}")
+                user_context = "authenticated user"
+            except Exception as e:
+                logger.error(f"Error extracting username for remarks: {e}")
                 user_context = "authenticated user"
         
         # Build simple remarks based on the operation

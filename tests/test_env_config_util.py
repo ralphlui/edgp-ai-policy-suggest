@@ -8,7 +8,7 @@ import pytest
 import tempfile
 import shutil
 from pathlib import Path
-from unittest.mock import patch, MagicMock, mock_open
+from unittest.mock import patch, MagicMock, mock_open, PropertyMock
 from io import StringIO
 from contextlib import redirect_stdout
 
@@ -165,6 +165,117 @@ class TestValidateEnvironment:
                 result = validate_environment('missing')
         
         assert result is False
+        
+    @patch('builtins.__import__')
+    @patch('os.path.exists')
+    def test_validate_environment_import_error(self, mock_exists, mock_import):
+        """Test validation when config import fails"""
+        mock_exists.return_value = True
+        mock_import.side_effect = ImportError("Could not import settings")
+        
+        with StringIO() as captured_output:
+            with redirect_stdout(captured_output):
+                result = validate_environment('test')
+            output = captured_output.getvalue()
+        
+        assert result is False
+        assert "Configuration validation failed" in output
+
+    @patch('builtins.__import__')
+    @patch('os.path.exists')
+    def test_validate_environment_missing_settings(self, mock_exists, mock_import):
+        """Test validation when settings attribute is missing"""
+        mock_exists.return_value = True
+        
+        # Create mock config module without settings
+        mock_config = MagicMock(spec=['app_env', 'env_file_path'])
+        mock_config.app_env = "test"
+        mock_config.env_file_path = ".env.test"
+        
+        # Remove settings attribute
+        type(mock_config).settings = PropertyMock(side_effect=AttributeError("'module' object has no attribute 'settings'"))
+        
+        mock_import.return_value = mock_config
+        
+        with StringIO() as captured_output:
+            with redirect_stdout(captured_output):
+                result = validate_environment('test')
+            output = captured_output.getvalue()
+        
+        assert result is False
+        assert "Configuration validation failed" in output
+        
+    @patch('builtins.__import__')
+    @patch('os.path.exists')
+    def test_validate_environment_success_all_settings(self, mock_exists, mock_import):
+        """Test validation with all critical settings configured"""
+        mock_exists.return_value = True
+        
+        # Create mock settings
+        mock_settings = MagicMock()
+        mock_settings.host = "localhost"
+        mock_settings.port = 8080
+        mock_settings.environment = "test"
+        mock_settings.log_level = "INFO"
+        mock_settings.jwt_public_key = "test-key"
+        mock_settings.admin_api_url = "http://admin.test"
+        mock_settings.rule_api_url = "http://rules.test"
+        
+        # Create mock config module
+        mock_config = MagicMock()
+        mock_config.settings = mock_settings
+        mock_config.app_env = "test"
+        mock_config.env_file_path = ".env.test"
+        
+        mock_import.return_value = mock_config
+        
+        with StringIO() as captured_output:
+            with redirect_stdout(captured_output):
+                result = validate_environment('test')
+            output = captured_output.getvalue()
+        
+        assert result is True
+        assert "Configuration loaded successfully" in output
+        assert "All critical settings configured" in output
+        assert "localhost" in output
+        assert "8080" in output
+        assert "INFO" in output
+        
+    @patch('builtins.__import__')
+    @patch('os.path.exists')
+    def test_validate_environment_missing_critical_settings(self, mock_exists, mock_import):
+        """Test validation with missing critical settings"""
+        mock_exists.return_value = True
+        
+        # Create mock settings with missing critical values
+        mock_settings = MagicMock()
+        mock_settings.host = "localhost"
+        mock_settings.port = 8080
+        mock_settings.environment = "test"
+        mock_settings.log_level = "INFO"
+        mock_settings.jwt_public_key = None  # Missing
+        mock_settings.admin_api_url = ""     # Missing
+        mock_settings.rule_api_url = None    # Missing
+        
+        # Create mock config module
+        mock_config = MagicMock()
+        mock_config.settings = mock_settings
+        mock_config.app_env = "test"
+        mock_config.env_file_path = ".env.test"
+        
+        mock_import.return_value = mock_config
+        
+        with StringIO() as captured_output:
+            with redirect_stdout(captured_output):
+                result = validate_environment('test')
+            output = captured_output.getvalue()
+        
+        assert result is True  # Returns True even with issues to allow validation reporting
+        assert "Configuration loaded successfully" in output
+        assert "Configuration Issues:" in output
+        assert "JWT public key not configured" in output
+        assert "Admin API URL not configured" in output
+        assert "Rule API URL not configured" in output
 
 
 class TestMainFunction:
