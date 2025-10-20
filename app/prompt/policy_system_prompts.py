@@ -242,7 +242,8 @@ def get_role_specific_prompt(role: str, base_prompt: str) -> str:
     
     return base_prompt
 
-if __name__ == "__main__":
+def main():
+    """Main function to display prompts information"""
     print(" Policy System Prompts for AI Policy Suggest")
     print("=" * 60)
     
@@ -253,3 +254,6 @@ if __name__ == "__main__":
         print("-" * 40)
         print(prompt[:200] + "..." if len(prompt) > 200 else prompt)
         print(f"Length: {len(prompt)} characters")
+
+if __name__ == "__main__":
+    main()

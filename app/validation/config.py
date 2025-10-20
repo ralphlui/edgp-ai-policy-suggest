@@ -136,7 +136,7 @@ class ValidationRules:
     required_columns: List[str] = None
     forbidden_columns: List[str] = None
     column_patterns: Dict[str, str] = None  # column_name -> regex pattern
-    custom_validators: Dict[str, callable] = None
+    custom_validators: Dict[str, str] = None  # column_name -> validator name
     
     def __post_init__(self):
         if self.required_columns is None:

@@ -13,7 +13,7 @@ import pytest_asyncio
 import httpx
 import jwt
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, Request, Response
 from fastapi.testclient import TestClient
 from starlette.responses import JSONResponse
@@ -31,17 +31,28 @@ from app.aws.audit_service import (
 pytest_asyncio.auto_mode = True
 
 
-def create_jwt_token(user_id: str, username: str, secret: str = "test_secret") -> str:
+from tests.test_config import setup_test_environment, TEST_PRIVATE_KEY
+
+def create_jwt_token(user_id: str, username: str) -> str:
     """Create a JWT token for testing"""
+    # Set up test environment with test RSA keys
+    setup_test_environment()
+    
+    # Create JWT payload with all necessary fields
+    current_time = datetime.now(timezone.utc)
     payload = {
-        "sub": user_id,        # User ID - extracted as userId
-        "username": username,   # Username - extracted as userName
-        "iat": datetime.utcnow(),
-        "exp": datetime.utcnow() + timedelta(hours=1),
+        "sub": user_id,            # User ID - extracted as userId
+        "userEmail": username,     # Username - extracted as userEmail
+        "username": username,      # Also include username field for compatibility
+        "iat": int(current_time.timestamp()),  # Use UTC timestamp for cross-system compatibility
+        "exp": int((current_time + timedelta(hours=1)).timestamp()),
+        "scope": "manage:policy",
         "iss": "edgp-ai-policy-suggest",
         "aud": "api-users"
     }
-    return jwt.encode(payload, secret, algorithm="HS256")
+    
+    # Sign with private key using RS256
+    return jwt.encode(payload, TEST_PRIVATE_KEY, algorithm="RS256")
 
 
 class TestAuditService:
@@ -441,24 +452,29 @@ class TestAuditMiddleware:
         assert ip4 == "unknown"
     
     @pytest.mark.asyncio
-    async def test_extract_user_id_comprehensive(self):
+    @patch('app.auth.authentication.get_token_validator')
+    async def test_extract_user_id_comprehensive(self, mock_get_validator):
         """Test comprehensive user ID extraction scenarios"""
+        # Setup mock validator
+        mock_validator = Mock()
+        mock_get_validator.return_value = mock_validator
+        
         # Test with 'sub' claim
-        payload1 = {"sub": "user123", "username": "testuser"}
-        token1 = jwt.encode(payload1, "secret", algorithm="HS256")
+        payload1 = {"sub": "user123", "userEmail": "testuser"}
+        mock_validator.decode_token.return_value = payload1
         
         request1 = Mock(spec=Request)
-        request1.headers = {"Authorization": f"Bearer {token1}"}
+        request1.headers = {"Authorization": "Bearer valid.token"}
         
         user_id1 = await self.middleware._extract_user_id(request1)
         assert user_id1 == "user123"
         
         # Test with 'user_id' fallback
-        payload2 = {"user_id": "alt123", "username": "testuser"}
-        token2 = jwt.encode(payload2, "secret", algorithm="HS256")
+        payload2 = {"user_id": "alt123", "userEmail": "testuser"}
+        mock_validator.decode_token.return_value = payload2
         
         request2 = Mock(spec=Request)
-        request2.headers = {"Authorization": f"Bearer {token2}"}
+        request2.headers = {"Authorization": "Bearer valid.token"}
         
         user_id2 = await self.middleware._extract_user_id(request2)
         assert user_id2 == "alt123"
@@ -470,42 +486,48 @@ class TestAuditMiddleware:
         user_id3 = await self.middleware._extract_user_id(request3)
         assert user_id3 is None
         
-        # Test with malformed JWT
+        # Test with validation error
+        mock_validator.decode_token.side_effect = jwt.InvalidTokenError()
         request4 = Mock(spec=Request)
-        request4.headers = {"Authorization": "Bearer invalid.token.format"}
+        request4.headers = {"Authorization": "Bearer invalid.token"}
         
         user_id4 = await self.middleware._extract_user_id(request4)
         assert user_id4 is None
     
     @pytest.mark.asyncio
-    async def test_extract_user_name_comprehensive(self):
+    @patch('app.auth.authentication.get_token_validator')
+    async def test_extract_user_name_comprehensive(self, mock_get_validator):
         """Test comprehensive username extraction scenarios"""
-        # Test with 'username' claim
-        payload1 = {"sub": "user123", "username": "testuser"}
-        token1 = jwt.encode(payload1, "secret", algorithm="HS256")
+        # Setup mock validator
+        mock_validator = Mock()
+        mock_get_validator.return_value = mock_validator
+        
+        # Test with 'userEmail' claim
+        payload1 = {"sub": "user123", "userEmail": "testuser"}
+        mock_validator.decode_token.return_value = payload1
         
         request1 = Mock(spec=Request)
-        request1.headers = {"Authorization": f"Bearer {token1}"}
+        request1.headers = {"Authorization": "Bearer valid.token"}
         
         username1 = await self.middleware._extract_user_name(request1)
         assert username1 == "testuser"
         
-        # Test with 'email' fallback
+        # Test with email fallback
         payload2 = {"sub": "user123", "email": "user@example.com"}
-        token2 = jwt.encode(payload2, "secret", algorithm="HS256")
+        mock_validator.decode_token.return_value = payload2
         
         request2 = Mock(spec=Request)
-        request2.headers = {"Authorization": f"Bearer {token2}"}
+        request2.headers = {"Authorization": "Bearer valid.token"}
         
         username2 = await self.middleware._extract_user_name(request2)
         assert username2 == "user@example.com"
         
         # Test with no username fields
         payload3 = {"sub": "user123", "role": "admin"}
-        token3 = jwt.encode(payload3, "secret", algorithm="HS256")
+        mock_validator.decode_token.return_value = payload3
         
         request3 = Mock(spec=Request)
-        request3.headers = {"Authorization": f"Bearer {token3}"}
+        request3.headers = {"Authorization": "Bearer valid.token"}
         
         username3 = await self.middleware._extract_user_name(request3)
         assert username3 is None
@@ -614,15 +636,22 @@ class TestAuditMiddleware:
         )
         assert "deleting" in remarks_delete
     
-    def test_build_remarks_authenticated_users(self):
+    @patch('app.auth.authentication.get_token_validator')
+    def test_build_remarks_authenticated_users(self, mock_get_validator):
         """Test remarks for authenticated users"""
+        # Setup mock validator
+        mock_validator = Mock()
+        mock_get_validator.return_value = mock_validator
+        
         # Test with valid JWT token
-        payload = {"username": "john.doe"}
-        token = jwt.encode(payload, "secret", algorithm="HS256")
+        mock_validator.decode_token.return_value = {
+            "userEmail": "john.doe",
+            "username": "john.doe"  # Include username field
+        }
         
         request = Mock(spec=Request)
         request.method = "GET"
-        request.headers = {"Authorization": f"Bearer {token}"}
+        request.headers = {"Authorization": "Bearer valid.token"}
         
         response = Mock(spec=Response)
         
@@ -671,22 +700,26 @@ class TestAuthenticatedAuditFlow:
         assert "exp" in payload
     
     @pytest.mark.asyncio
-    async def test_authenticated_request_simulation(self):
+    @patch('app.auth.authentication.get_token_validator')
+    async def test_authenticated_request_simulation(self, mock_get_validator):
         """Test simulated authenticated requests"""
-        # Test user configuration
+        # Generate real test tokens for each user
         test_users = [
-            {"user_id": "user_12345", "username": "john.doe", "role": "Regular User"},
-            {"user_id": "admin_001", "username": "admin@company.com", "role": "Administrator"}
+            {"user_id": "user_12345", "userEmail": "john.doe", "role": "Regular User"},
+            {"user_id": "admin_001", "userEmail": "admin@company.com", "role": "Administrator"}
         ]
         
         for user in test_users:
-            # Create JWT token for user
-            token = create_jwt_token(user["user_id"], user["username"])
+            # Create actual JWT token
+            token = create_jwt_token(user["user_id"], user["userEmail"])
             
-            # Verify token structure
-            payload = jwt.decode(token, options={"verify_signature": False})
-            assert payload["sub"] == user["user_id"]
-            assert payload["username"] == user["username"]
+            # Setup mock validator
+            mock_validator = Mock()
+            mock_get_validator.return_value = mock_validator
+            
+            # Setup mock validator to return decoded token
+            decoded_token = jwt.decode(token, options={"verify_signature": False})
+            mock_validator.decode_token.return_value = decoded_token
             
             # Simulate audit context creation
             mock_request = Mock(spec=Request)
@@ -698,7 +731,7 @@ class TestAuthenticatedAuditFlow:
             username = await middleware._extract_user_name(mock_request)
             
             assert user_id == user["user_id"]
-            assert username == user["username"]
+            assert username == user["userEmail"]
     
     def test_anonymous_request_handling(self):
         """Test handling of requests without JWT tokens"""
