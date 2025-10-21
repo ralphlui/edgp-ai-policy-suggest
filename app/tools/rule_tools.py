@@ -155,17 +155,30 @@ def suggest_column_rules(data_schema: dict, gx_rules: list) -> str:
                 prompt = get_enhanced_rule_prompt(domain, column_schema, type_specific_rules)
                 prompt += f"\nGenerate rules ONLY for column '{col}' with type '{data_type}'. Focus on type-specific validations and business rules."
                 
+                # Infer actual data type from name/type info
+                inferred_type = data_type
+                if inferred_type == 'unknown':
+                    col_name = col.upper()
+                    if '_DATE' in col_name or 'DATE' in col_name:
+                        inferred_type = 'date'
+                    elif '_NUM' in col_name or 'NUMBER' in col_name or col_name.endswith('_ID'):
+                        inferred_type = 'number'
+                    elif '_FLAG' in col_name or col_name.endswith('_YN'):
+                        inferred_type = 'boolean'
+                    else:
+                        inferred_type = 'string'
+
                 try:
                     result = _process_llm_request(llm, prompt)
                     if result and result != "[]":
                         processed_results.append(result)
                     else:
                         # Generate type-specific fallback
-                        fallback = generate_type_specific_fallback(col, data_type)
+                        fallback = generate_type_specific_fallback(col, inferred_type)
                         processed_results.append(json.dumps([fallback]))
                 except Exception as e:
                     logger.error(f"Error processing column {col}: {e}")
-                    fallback = generate_type_specific_fallback(col, data_type)
+                    fallback = generate_type_specific_fallback(col, inferred_type)
                     processed_results.append(json.dumps([fallback]))
     
     # Return early if we have all results
