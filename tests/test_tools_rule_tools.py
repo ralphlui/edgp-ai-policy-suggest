@@ -202,8 +202,17 @@ class TestRuleToolsModule:
         
         from app.tools.rule_tools import suggest_column_rules
         
-        schema = {"columns": [{"name": "test", "type": "string"}]}
-        rules = [{"rule_name": "test_rule"}]
+        schema = {
+            "domain": "test_domain",
+            "test": {
+                "type": "string",
+                "name": "test",
+                "description": "test column",
+                "format": "",
+                "constraints": {}
+            }
+        }
+        rules = [{"rule_name": "test_rule", "applies_to": ["all"]}]
         
         result = suggest_column_rules.func(schema, rules)
         
