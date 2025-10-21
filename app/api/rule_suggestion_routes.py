@@ -6,6 +6,20 @@ from app.agents.schema_suggester import bootstrap_schema_for_domain
 from app.vector_db.schema_loader import get_schema_by_domain
 import logging
 import traceback
+import time
+from contextlib import contextmanager
+
+logger = logging.getLogger(__name__)
+
+@contextmanager
+def log_duration(step_name: str):
+    """Context manager to log duration of steps"""
+    start_time = time.time()
+    try:
+        yield
+    finally:
+        duration = time.time() - start_time
+        logger.info(f" {step_name} took {duration:.2f}s")
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/aips/rules", tags=["rule-suggestions"])
@@ -103,6 +117,10 @@ async def suggest_rules(
         # Log authenticated user information
         logger.info(f" Suggest rules request from user: {user.email} with scopes: {user.scopes}")
         
+        # Log overall request start time
+        request_start_time = time.time()
+        logger.info(" Starting rule suggestion request")
+
         # Try to get schema from vector database
         logger.info(f"Attempting to retrieve schema for domain: {domain}")
         
@@ -116,18 +134,19 @@ async def suggest_rules(
             # If schema is empty but no exception, try with forced refresh for newly created domains
             if not schema:
                 logger.info(f"Schema not found for domain {domain}, attempting optimized refresh...")
-                from app.vector_db.schema_loader import get_store
-                store = get_store()
-                if store:
-                    # Force refresh to pick up recently created domains
-                    store.force_refresh_index()
-                    # Reduced wait time for better performance
-                    import asyncio
-                    await asyncio.sleep(0.1)  # Reduced from 0.5 to 0.1 seconds
-                    # Try again
-                    schema = get_schema_by_domain(domain)
-                    if schema:
-                        logger.info(f" Schema found for domain {domain} after optimized refresh")
+                with log_duration("Vector DB refresh"):
+                    from app.vector_db.schema_loader import get_store
+                    store = get_store()
+                    if store:
+                        # Force refresh to pick up recently created domains
+                        store.force_refresh_index()
+                        # Reduced wait time for better performance
+                        import asyncio
+                        await asyncio.sleep(0.1)  # Reduced from 0.5 to 0.1 seconds
+                        # Try again
+                        schema = get_schema_by_domain(domain)
+                        if schema:
+                            logger.info(f" Schema found for domain {domain} after optimized refresh")
             
             vector_db_status = "connected"
             logger.info(f"Vector DB connection successful. Schema retrieval result for domain {domain}: {schema}")
@@ -147,10 +166,15 @@ async def suggest_rules(
             
             if include_insights:
                 # Use enhanced agent with full insights
-                from app.agents.agent_runner import AgentState, build_graph
-                initial_state = AgentState(data_schema=schema)
-                graph = build_graph()
-                result = graph.invoke(initial_state)
+                with log_duration("Agent workflow initialization"):
+                    from app.agents.agent_runner import AgentState, build_graph
+                    initial_state = AgentState(data_schema=schema)
+                    graph = build_graph()
+                
+                with log_duration("Agent execution"):
+                    result = graph.invoke(initial_state)
+                
+                logger.info(f"Total request duration: {time.time() - request_start_time:.2f}s")
                 
                 if isinstance(result, dict):
                     state = AgentState(**result)
