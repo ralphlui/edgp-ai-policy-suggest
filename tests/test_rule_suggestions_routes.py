@@ -70,6 +70,7 @@ def test_suggest_rules_schema_found_with_insights(client, monkeypatch):
         def invoke(self, initial_state):
             return FakeAgentState(
                 data_schema=initial_state.data_schema,
+                enhanced_prompt=initial_state.enhanced_prompt,
                 rule_suggestions=[{"column": "email", "rule": "format:email"},
                                   {"column": "id", "rule": "not_empty"}],
                 execution_metrics={"total_execution_time": 1.7},
@@ -78,9 +79,18 @@ def test_suggest_rules_schema_found_with_insights(client, monkeypatch):
                 reflections=["r1"]
             )
 
-    # Ensure the dynamic import inside the route resolves to our fake module
+    # Mock the RuleRAGEnhancer
+    class FakeRAGEnhancer:
+        async def enhance_prompt_with_history(self, schema, domain):
+            return "Enhanced prompt for testing"
+            
+        async def store_successful_policy(self, domain, schema, rules, performance_metrics):
+            return True
+
+    # Ensure the dynamic imports inside the route resolve to our fake modules
     fake_agent_runner = types.SimpleNamespace(AgentState=FakeAgentState, build_graph=lambda: FakeGraph())
     monkeypatch.setitem(sys.modules, "app.agents.agent_runner", fake_agent_runner)
+    monkeypatch.setattr(rules_module, "RuleRAGEnhancer", lambda: FakeRAGEnhancer())
 
     payload = {"domain": "customer", "include_insights": True}
     resp = client.post("/api/aips/rules/suggest", json=payload)

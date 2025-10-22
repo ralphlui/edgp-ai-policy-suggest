@@ -45,6 +45,7 @@ class AgentState(BaseModel):
     formatted_rules: Optional[List[Any]] = None
     normalized_suggestions: Optional[Dict[str, Any]] = None
     rule_suggestions: Optional[Annotated[List[Dict[str, Any]], "last"]] = None
+    enhanced_prompt: Optional[str] = None  # RAG-enhanced prompt
     
     # ReAct Pattern components
     thoughts: List[str] = Field(default_factory=list)
@@ -288,7 +289,8 @@ def build_graph():
     workflow.add_node("suggest", lambda s: {
         "raw_suggestions": suggest_column_rules.invoke({
             "data_schema": s.data_schema,
-            "gx_rules": s.gx_rules
+            "gx_rules": s.gx_rules,
+            "enhanced_prompt": s.enhanced_prompt  # Include RAG context if available
         })
     })
     

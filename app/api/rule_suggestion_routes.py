@@ -4,6 +4,7 @@ from app.auth.authentication import verify_any_scope_token, UserInfo
 from app.agents.agent_runner import run_agent
 from app.agents.schema_suggester import bootstrap_schema_for_domain
 from app.vector_db.schema_loader import get_schema_by_domain
+from app.agents.rule_rag_enhancer import RuleRAGEnhancer
 import logging
 import traceback
 import time
@@ -199,16 +200,54 @@ async def suggest_rules(
             log_domain_operation("Schema retrieved successfully", domain, "generating rules")
             
             if include_insights:
-                # Use enhanced agent with full insights
+                # Initialize RAG enhancer
+                rag_enhancer = RuleRAGEnhancer()
+                
+                # Use enhanced agent with RAG and full insights
                 with log_duration("Agent workflow initialization"):
                     from app.agents.agent_runner import AgentState, build_graph
-                    initial_state = AgentState(data_schema=schema)
+                    
+                    # Enhance prompt with historical context
+                    enhanced_prompt = await rag_enhancer.enhance_prompt_with_history(
+                        schema=schema,
+                        domain=domain
+                    )
+                    
+                    # Initialize state with enhanced prompt
+                    initial_state = AgentState(
+                        data_schema=schema,
+                        enhanced_prompt=enhanced_prompt
+                    )
                     graph = build_graph()
                 
                 with log_duration("Agent execution"):
                     result = graph.invoke(initial_state)
                 
                 logger.info(f"Total request duration: {time.time() - request_start_time:.2f}s")
+                
+                # Store successful policy if confidence is high
+                if isinstance(result, dict):
+                    state = AgentState(**result)
+                else:
+                    state = result
+                
+                confidence = _calculate_overall_confidence(state)
+                if confidence >= 0.8 and state.rule_suggestions:
+                    try:
+                        await rag_enhancer.store_successful_policy(
+                            domain=domain,
+                            schema=schema,
+                            rules=state.rule_suggestions,
+                            performance_metrics={
+                                "success_rate": confidence,
+                                "validation_score": confidence,
+                                "usage_count": 1
+                            }
+                        )
+                    except Exception as e:
+                        # Log the error but continue with the response
+                        logger.error(f"Failed to store policy history: {e}")
+                        # Don't re-raise the error as policy storage is not critical for rule suggestions
                 
                 if isinstance(result, dict):
                     state = AgentState(**result)

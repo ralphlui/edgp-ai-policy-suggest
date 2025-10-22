@@ -66,7 +66,7 @@ def suggest_column_rules(data_schema: dict, gx_rules: list) -> str:
     openai_key = require_openai_api_key()
     # Optimized for reliable rule generation
     llm = ChatOpenAI(
-        model="gpt-3.5-turbo-1106",  # Latest model with better JSON handling
+        model=settings.schema_llm_model,  # Use configured model
         openai_api_key=openai_key,
         temperature=0.1,  # Slight variation for better rules
         max_tokens=400,  # Enough tokens for complete rules
@@ -451,7 +451,7 @@ def suggest_column_names_only(domain: str) -> list:
     """Use LLM to suggest CSV column names with business intelligence expertise. Includes validation and safety checks."""
     
     openai_key = require_openai_api_key()
-    llm = ChatOpenAI(model=settings.rules_llm_model, openai_api_key=openai_key, temperature=settings.llm_temperature)
+    llm = ChatOpenAI(model=settings.schema_llm_model, openai_api_key=openai_key, temperature=settings.llm_temperature)
 
     # Use enhanced prompt from configuration system  
     prompt = get_enhanced_column_prompt(domain)
@@ -595,7 +595,7 @@ def normalize_rule_suggestions(rule_input: dict) -> dict:
         logger.warning(" Expected list under 'raw', got: %s", type(raw))
         return {"error": "Invalid input type", "raw": raw}
 
-    logger.info(f"🔍 Normalizing {len(raw)} raw rule objects")
+    logger.info(f" Normalizing {len(raw)} raw rule objects")
     result = {}
     
     for i, item in enumerate(raw):
@@ -619,7 +619,7 @@ def normalize_rule_suggestions(rule_input: dict) -> dict:
         except Exception as e:
             logger.warning(" Exception processing item %d: %s", i+1, e)
 
-    logger.info(f"🎯 Normalization complete: {len(result)} columns processed")
+    logger.info(f" Normalization complete: {len(result)} columns processed")
     return result
 
 @tool
