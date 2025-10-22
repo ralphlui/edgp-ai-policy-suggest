@@ -6,9 +6,11 @@ import pytest
 import json
 import tempfile
 import os
+import uuid
 from unittest.mock import Mock, patch, AsyncMock
 from fastapi.responses import JSONResponse, FileResponse
 from app.api.aoss_routes import check_vectordb_status
+import app.api.domain_schema_routes as domains_module
 from app.api.domain_schema_routes import download_csv_file
 from app.aoss.column_store import get_store
 
@@ -70,37 +72,48 @@ class TestVectorStatusRoute:
 class TestDownloadCSVRoute:
     @pytest.mark.asyncio
     async def test_download_csv_success(self):
+        # Clear any existing mappings
+        domains_module.clear_file_mappings()
+
         temp_dir = tempfile.gettempdir()
         filename = "test_customer_schema.csv"
         csv_path = os.path.join(temp_dir, filename)
+        
         with open(csv_path, 'w') as f:
             f.write("email,name,age\n")
+        
         try:
-            result = await download_csv_file(filename)
+            # Register the file and get a secure file ID
+            file_id = domains_module.register_csv_file(filename, csv_path)
+            
+            result = await download_csv_file(file_id)
             assert isinstance(result, FileResponse)
             assert result.filename == filename
             assert result.media_type == "text/csv"
         finally:
             if os.path.exists(csv_path):
                 os.remove(csv_path)
+            domains_module.clear_file_mappings()
 
     @pytest.mark.asyncio
     async def test_download_csv_invalid_filename(self):
-        result = await download_csv_file("../malicious.csv")
+        result = await download_csv_file("not-a-uuid")
         assert isinstance(result, JSONResponse)
         assert result.status_code == 400
         content = json.loads(result.body.decode())
         assert "error" in content
-        assert "Invalid filename" in content["error"]
+        assert "Invalid file ID format" in content["error"]
 
     @pytest.mark.asyncio
     async def test_download_csv_file_not_found(self):
-        result = await download_csv_file("nonexistent.csv")
+        # Use a valid UUID that doesn't exist in mappings
+        file_id = str(uuid.uuid4())
+        result = await download_csv_file(file_id)
         assert isinstance(result, JSONResponse)
         assert result.status_code == 404
         content = json.loads(result.body.decode())
         assert "error" in content
-        assert "CSV file not found" in content["error"]
+        assert "File not found" in content["error"]
 
 @pytest.fixture(autouse=True)
 def reset_store():

@@ -1,4 +1,4 @@
-from typing import Dict, List, Any, Optional, Literal
+from typing import Dict, List, Any, Optional, Literal, Union, Tuple
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph
 from typing import Annotated
@@ -368,6 +368,114 @@ def build_graph():
 
     return workflow.compile()
 
+def _setup_validation_context(domain: str, schema: dict) -> Optional[AgentValidationContext]:
+    """Set up validation context if enabled"""
+    if not settings.llm_validation_enabled:
+        logger.info(" LLM validation disabled")
+        return None
+        
+    validation_config = settings.get_llm_validation_config()
+    user_id = f"agent_{domain}_{hash(str(schema)) % 10000}"
+    context = AgentValidationContext(user_id, validation_config)
+    logger.info(" LLM validation enabled for agent workflow")
+    return context
+
+def _extract_results(result: Union[AgentState, dict]) -> Tuple[List[Any], List[str], List[str], List[str], Dict[str, Any], List[AgentStep]]:
+    """Extract and normalize results from either AgentState or dict"""
+    if isinstance(result, dict):
+        logger.warning("LangGraph returned dict instead of AgentState")
+        return (
+            result.get("rule_suggestions", []),
+            result.get("thoughts", []),
+            result.get("observations", []),
+            result.get("reflections", []),
+            result.get("execution_metrics", {}),
+            result.get("step_history", [])
+        )
+    
+    return (
+        result.rule_suggestions or [],
+        result.thoughts,
+        result.observations,
+        result.reflections,
+        result.execution_metrics,
+        result.step_history
+    )
+
+def _log_agent_progress(thoughts: List[str], observations: List[str], reflections: List[str], 
+                       rule_suggestions: List[Any], validation_metrics: Optional[Dict] = None):
+    """Log agent progress and insights"""
+    logger.info(f" Agent completed {len(thoughts)} reasoning steps")
+    logger.info(f" Agent made {len(observations)} observations")
+    logger.info(f" Agent performed {len(reflections)} reflection cycles")
+    logger.info(f" Generated {len(rule_suggestions)} rule suggestions")
+    
+    if validation_metrics:
+        logger.info(f" Validation metrics: {validation_metrics}")
+    
+    # Log sample of thoughts and reflections
+    if thoughts:
+        logger.info(" Key agent thoughts:")
+        for i, thought in enumerate(thoughts[:3], 1):
+            logger.info(f"   {i}. {thought[:100]}...")
+            
+    if reflections:
+        logger.info(" Agent reflections:")
+        for i, reflection in enumerate(reflections[-2:], 1):
+            logger.info(f"   {i}. {reflection[:100]}...")
+
+def _create_validation_response(domain: str, rule_suggestions: List[Any], thoughts: List[str],
+                              observations: List[str], reflections: List[str], execution_metrics: Dict,
+                              step_history: List[AgentStep]) -> Dict[str, Any]:
+    """Create validation response with agent context"""
+    return {
+        "domain": domain,
+        "rules": rule_suggestions,
+        "explanation": "Enhanced AI agent generated rules with reasoning and reflection",
+        "agent_metadata": {
+            "reasoning_steps": len(thoughts),
+            "observations": len(observations),
+            "reflections": len(reflections),
+            "execution_time": execution_metrics.get("total_execution_time", 0),
+            "steps_completed": len(step_history)
+        }
+    }
+
+def _handle_agent_error(e: Exception, domain: str, validation_start_time: float):
+    """Handle agent execution error and record metrics"""
+    logger.error(f" Enhanced agent execution failed for domain {domain}: {e}")
+    validation_time_ms = (time.time() - validation_start_time) * 1000
+    
+    try:
+        from app.validation.llm_validator import ValidationResult, ValidationIssue, ValidationSeverity
+        
+        failed_result = ValidationResult(
+            is_valid=False,
+            confidence_score=0.0,
+            issues=[ValidationIssue(
+                field="enhanced_agent_execution",
+                severity=ValidationSeverity.CRITICAL,
+                message=f"Enhanced agent workflow failed: {str(e)}",
+                suggestion="Check logs, validate configuration, and retry with simpler approach"
+            )],
+            corrected_data=None,
+            metadata={
+                "error": str(e),
+                "agent_type": "enhanced_react",
+                "failure_stage": "execution"
+            }
+        )
+        
+        record_validation_metric(
+            domain=domain,
+            response_type="rule",
+            validation_result=failed_result,
+            validation_time_ms=validation_time_ms,
+            metadata={"failure_type": "agent_execution_error"}
+        )
+    except Exception as metrics_error:
+        logger.warning(f"Failed to record failure metrics: {metrics_error}")
+
 def run_agent(schema: dict) -> List[Dict[str, Any]]:
     """
     Run the enhanced agentic rule suggestion workflow with ReAct pattern,
@@ -382,84 +490,36 @@ def run_agent(schema: dict) -> List[Dict[str, Any]]:
     validation_start_time = time.time()
     domain = schema.get("domain", "unknown")
     
-    # Create validation context if enabled
-    validation_context = None
-    if settings.llm_validation_enabled:
-        validation_config = settings.get_llm_validation_config()
-        user_id = f"agent_{domain}_{hash(str(schema)) % 10000}"
-        validation_context = AgentValidationContext(user_id, validation_config)
-        logger.info("🛡️ LLM validation enabled for agent workflow")
-    else:
-        logger.info("⚠️ LLM validation disabled")
-    
     try:
+        # Setup validation
+        validation_context = _setup_validation_context(domain, schema)
+        
         with validation_context if validation_context else None as validator:
             logger.info(f"🤖 Starting enhanced agentic workflow for domain: {domain}")
             
-            # Initialize enhanced state
+            # Initialize and run
             initial_state = AgentState(data_schema=schema)
-            
-            # Add validation context to state if available
             if validator:
                 initial_state.metadata["validation_context"] = validator
             
-            # Build and execute the enhanced graph
             graph = build_graph()
             result = graph.invoke(initial_state)
 
-            # Extract results with enhanced handling
-            if isinstance(result, dict):
-                logger.warning("LangGraph returned dict instead of AgentState")
-                rule_suggestions = result.get("rule_suggestions", [])
-                thoughts = result.get("thoughts", [])
-                observations = result.get("observations", [])
-                reflections = result.get("reflections", [])
-                execution_metrics = result.get("execution_metrics", {})
-                step_history = result.get("step_history", [])
-            else:
-                rule_suggestions = result.rule_suggestions or []
-                thoughts = result.thoughts
-                observations = result.observations  
-                reflections = result.reflections
-                execution_metrics = result.execution_metrics
-                step_history = result.step_history
-
-            # Enhanced logging with agent reasoning
-            logger.info(f" Agent completed {len(thoughts)} reasoning steps")
-            logger.info(f" Agent made {len(observations)} observations")
-            logger.info(f" Agent performed {len(reflections)} reflection cycles")
-            logger.info(f" Generated {len(rule_suggestions)} rule suggestions")
+            # Process results
+            rule_suggestions, thoughts, observations, reflections, execution_metrics, step_history = _extract_results(result)
             
-            # Log validation metrics if available
-            if validator:
-                validation_metrics = validator.get_metrics()
-                logger.info(f" Validation metrics: {validation_metrics}")
-            
-            # Log key insights from agent reasoning
-            if thoughts:
-                logger.info(" Key agent thoughts:")
-                for i, thought in enumerate(thoughts[:3], 1):  # Log first 3 thoughts
-                    logger.info(f"   {i}. {thought[:100]}...")
-                    
-            if reflections:
-                logger.info(" Agent reflections:")
-                for i, reflection in enumerate(reflections[-2:], 1):  # Log last 2 reflections
-                    logger.info(f"   {i}. {reflection[:100]}...")
+            # Log progress
+            _log_agent_progress(
+                thoughts, observations, reflections, rule_suggestions,
+                validator.get_metrics() if validator else None
+            )
 
-            # Enhanced validation with agent context
+            # Validate if there are suggestions
             if rule_suggestions:
-                validation_response = {
-                    "domain": domain,
-                    "rules": rule_suggestions,
-                    "explanation": "Enhanced AI agent generated rules with reasoning and reflection",
-                    "agent_metadata": {
-                        "reasoning_steps": len(thoughts),
-                        "observations": len(observations),
-                        "reflections": len(reflections),
-                        "execution_time": execution_metrics.get("total_execution_time", 0),
-                        "steps_completed": len(step_history)
-                    }
-                }
+                validation_response = _create_validation_response(
+                    domain, rule_suggestions, thoughts, observations,
+                    reflections, execution_metrics, step_history
+                )
                 
                 validation_result = validate_llm_response(
                     response=validation_response,
@@ -467,75 +527,43 @@ def run_agent(schema: dict) -> List[Dict[str, Any]]:
                     strict_mode=False,
                     auto_correct=True
                 )
+                
+                # Record metrics
+                try:
+                    record_validation_metric(
+                        domain=domain,
+                        response_type="rule",
+                        validation_result=validation_result,
+                        validation_time_ms=(time.time() - validation_start_time) * 1000,
+                        metadata={
+                            "agent_type": "enhanced_react",
+                            "reasoning_steps": len(thoughts),
+                            "reflection_cycles": len(reflections),
+                            "total_execution_time": execution_metrics.get("total_execution_time", 0)
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to record enhanced validation metrics: {e}")
+                
+                # Log validation results
+                if validation_result.issues:
+                    logger.warning(f" Validation found {len(validation_result.issues)} issues:")
+                    for issue in validation_result.issues:
+                        logger.warning(f"   {issue.severity.value.upper()}: {issue.field} - {issue.message}")
+                
+                logger.info(f" Validation confidence: {validation_result.confidence_score:.2f}")
+                logger.info(f" Total execution time: {execution_metrics.get('total_execution_time', 0):.2f}s")
+                
+                # Use corrected rules if available
+                if validation_result.corrected_data and validation_result.corrected_data.get("rules"):
+                    logger.info(" Using auto-corrected rule suggestions")
+                    rule_suggestions = validation_result.corrected_data["rules"]
             
-            # Enhanced metrics recording
-            validation_time_ms = (time.time() - validation_start_time) * 1000
-            try:
-                record_validation_metric(
-                    domain=domain,
-                    response_type="rule",
-                    validation_result=validation_result,
-                    validation_time_ms=validation_time_ms,
-                    metadata={
-                        "agent_type": "enhanced_react",
-                        "reasoning_steps": len(thoughts),
-                        "reflection_cycles": len(reflections),
-                        "total_execution_time": execution_metrics.get("total_execution_time", 0)
-                    }
-                )
-            except Exception as e:
-                logger.warning(f"Failed to record enhanced validation metrics: {e}")
+            return rule_suggestions
             
-            # Log validation results with agent context
-            if validation_result.issues:
-                logger.warning(f" Validation found {len(validation_result.issues)} issues:")
-                for issue in validation_result.issues:
-                    logger.warning(f"   {issue.severity.value.upper()}: {issue.field} - {issue.message}")
-            
-            logger.info(f" Validation confidence: {validation_result.confidence_score:.2f}")
-            logger.info(f" Total execution time: {execution_metrics.get('total_execution_time', 0):.2f}s")
-            
-            # Use corrected rules if available
-            if validation_result.corrected_data and validation_result.corrected_data.get("rules"):
-                logger.info(" Using auto-corrected rule suggestions")
-                rule_suggestions = validation_result.corrected_data["rules"]
-        
-        return rule_suggestions
-        
     except Exception as e:
-        logger.error(f" Enhanced agent execution failed for domain {domain}: {e}")
-        
-        # Enhanced error handling with metrics
-        validation_time_ms = (time.time() - validation_start_time) * 1000
-        try:
-            from app.validation.llm_validator import ValidationResult, ValidationIssue, ValidationSeverity
-            
-            failed_result = ValidationResult(
-                is_valid=False,
-                confidence_score=0.0,
-                issues=[ValidationIssue(
-                    field="enhanced_agent_execution",
-                    severity=ValidationSeverity.CRITICAL,
-                    message=f"Enhanced agent workflow failed: {str(e)}",
-                    suggestion="Check logs, validate configuration, and retry with simpler approach"
-                )],
-                corrected_data=None,
-                metadata={
-                    "error": str(e),
-                    "agent_type": "enhanced_react",
-                    "failure_stage": "execution"
-                }
-            )
-            
-            record_validation_metric(
-                domain=domain,
-                response_type="rule",
-                validation_result=failed_result,
-                validation_time_ms=validation_time_ms,
-                metadata={"failure_type": "agent_execution_error"}
-            )
-        except Exception as metrics_error:
-            logger.warning(f"Failed to record failure metrics: {metrics_error}")
+        _handle_agent_error(e, domain, validation_start_time)
+        return []
         
         return []
 

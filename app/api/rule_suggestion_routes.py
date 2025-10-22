@@ -7,9 +7,43 @@ from app.vector_db.schema_loader import get_schema_by_domain
 import logging
 import traceback
 import time
+import re
 from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
+
+def sanitize_for_logging(value: str) -> str:
+    """
+    Sanitize user-controlled strings for safe logging.
+    Removes or escapes potentially dangerous characters.
+    """
+    if not isinstance(value, str):
+        return '<non-string>'
+    # Remove any control characters and limit length
+    sanitized = re.sub(r'[\x00-\x1F\x7F]', '', value)
+    # Replace potentially problematic characters
+    sanitized = re.sub(r'[(){}\[\]<>\'"`\\]', '_', sanitized)
+    return sanitized[:100]  # Limit length to prevent log injection
+
+def log_domain_operation(operation: str, domain: str, details: str = None) -> None:
+    """
+    Safely log domain-related operations with sanitized input.
+    """
+    safe_domain = sanitize_for_logging(domain)
+    safe_details = sanitize_for_logging(details) if details else None
+    
+    if safe_details:
+        logger.info(f"{operation} - domain: {safe_domain} - {safe_details}")
+    else:
+        logger.info(f"{operation} - domain: {safe_domain}")
+
+def log_error(operation: str, domain: str, error: Exception) -> None:
+    """
+    Safely log errors with sanitized input.
+    """
+    safe_domain = sanitize_for_logging(domain)
+    safe_error = sanitize_for_logging(str(error))
+    logger.error(f"{operation} failed - domain: {safe_domain} - error: {safe_error}")
 
 @contextmanager
 def log_duration(step_name: str):
@@ -114,15 +148,15 @@ async def suggest_rules(
     include_insights: bool = Body(True, embed=True)  # Optional parameter for insights (default: True)
 ):
     try:
-        # Log authenticated user information
-        logger.info(f" Suggest rules request from user: {user.email} with scopes: {user.scopes}")
+        # Log authenticated user information (email is already verified by auth)
+        logger.info(f" Suggest rules request from user: {user.email}")
         
         # Log overall request start time
         request_start_time = time.time()
-        logger.info(" Starting rule suggestion request")
+        log_domain_operation("Starting rule suggestion request", domain)
 
         # Try to get schema from vector database
-        logger.info(f"Attempting to retrieve schema for domain: {domain}")
+        log_domain_operation("Retrieving schema", domain)
         
         # First, test vector DB connectivity
         vector_db_status = "unknown"
@@ -133,7 +167,7 @@ async def suggest_rules(
             
             # If schema is empty but no exception, try with forced refresh for newly created domains
             if not schema:
-                logger.info(f"Schema not found for domain {domain}, attempting optimized refresh...")
+                log_domain_operation("Schema not found, attempting refresh", domain)
                 with log_duration("Vector DB refresh"):
                     from app.vector_db.schema_loader import get_store
                     store = get_store()
@@ -146,23 +180,23 @@ async def suggest_rules(
                         # Try again
                         schema = get_schema_by_domain(domain)
                         if schema:
-                            logger.info(f" Schema found for domain {domain} after optimized refresh")
+                            log_domain_operation("Schema found after refresh", domain)
             
             vector_db_status = "connected"
-            logger.info(f"Vector DB connection successful. Schema retrieval result for domain {domain}: {schema}")
+            log_domain_operation("Vector DB connection successful", domain)
         except Exception as db_error:
             connection_error = str(db_error)
             schema = None
             # Check if it's a connection/auth issue vs schema not found
             if "AuthorizationException" in connection_error or "RetryError" in connection_error or "ConnectionError" in connection_error:
                 vector_db_status = "connection_failed"
-                logger.error(f"Vector DB connection failed for domain {domain}: {connection_error}")
+                log_error("Vector DB connection", domain, db_error)
             else:
                 vector_db_status = "accessible_but_error"
-                logger.warning(f"Vector DB accessible but error occurred for domain {domain}: {connection_error}")
+                log_error("Vector DB operation", domain, db_error)
 
         if schema:
-            logger.info(f"Successfully retrieved schema for domain {domain}, generating rules")
+            log_domain_operation("Schema retrieved successfully", domain, "generating rules")
             
             if include_insights:
                 # Use enhanced agent with full insights
@@ -221,7 +255,7 @@ async def suggest_rules(
         else:
             # Case 2: Can connect to vector DB but schema doesn't exist for this domain
             # Only now generate LLM-suggested column names (no data types)
-            logger.info(f"Vector DB accessible but no schema found. Generating column name suggestions for domain: {domain}")
+            log_domain_operation("Generating schema suggestions", domain, "no existing schema found")
             suggested_schema = bootstrap_schema_for_domain(domain)
             
             # Create column names only (no data types) when domain not found in vector DB
@@ -270,8 +304,7 @@ async def suggest_rules(
 
     except Exception as e:
         # This catches any unexpected errors not handled above
-        error_message = str(e)
-        logger.error(f"Unexpected error in suggest_rules for domain {domain}: {error_message}")
+        log_error("Suggest rules operation", domain, e)
         traceback.print_exc()
         
         return JSONResponse({
