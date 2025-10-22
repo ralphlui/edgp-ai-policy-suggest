@@ -10,6 +10,9 @@ import logging, time, io, csv
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/aips/domains", tags=["domain-schema"])
 
+# Constants
+EXTEND_SCHEMA_ENDPOINT = "/api/aips/domains/extend-schema"
+
 # --- Domain & Schema Endpoints ---
 
 # Helper functions
@@ -103,7 +106,7 @@ async def create_domain(
                         "actions": {
                             "extend-schema": {
                                 "description": "Add new columns to existing domain",
-                                "endpoint": "/api/aips/domains/extend-schema",
+                                "endpoint": EXTEND_SCHEMA_ENDPOINT,
                                 "method": "POST",
                                 "payload": {
                                     "domain": existing_domain,
@@ -810,7 +813,7 @@ Focus on identifying missing business dimensions and valuable extensions to the 
                     "note": "Additional columns suggested for existing domain. These will extend the current schema.",
                     "extend_schema_with_csv": {
                         "description": "Extend existing schema with suggested columns and generate CSV",
-                        "endpoint": "/api/aips/domains/extend-schema",
+                        "endpoint": EXTEND_SCHEMA_ENDPOINT,
                         "method": "PUT",
                         "payload": {
                             "domain": existing_domain_name,
@@ -825,7 +828,7 @@ Focus on identifying missing business dimensions and valuable extensions to the 
                     },
                     "extend_schema_only": {
                         "description": "Extend existing schema with suggested columns",
-                        "endpoint": "/api/aips/domains/extend-schema",
+                        "endpoint": EXTEND_SCHEMA_ENDPOINT,
                         "method": "PUT",
                         "payload": {
                             "domain": existing_domain_name,
@@ -1159,7 +1162,7 @@ async def extend_domain(request: Request):
             "actions": {
                 "suggest_more": f"/api/aips/domains/suggest-extend-schema/{domain_name}",
                 "view_domain": f"/api/aips/domains/{domain_name}",
-                "regenerate_extensions": "/api/aips/domains/extend-schema"
+                "regenerate_extensions": EXTEND_SCHEMA_ENDPOINT
             }
         })
         
@@ -1288,7 +1291,7 @@ async def suggest_extensions(domain_name: str, request: Request):
             "suggestions": suggestions_by_focus,
             "existing_columns": [col.get("column_name") for col in existing_columns],
             "actions": {
-                "extend_domain": "/api/aips/domains/extend-schema",
+                "extend_domain": EXTEND_SCHEMA_ENDPOINT,
                 "view_domain": f"/api/aips/domains/{domain_name}",
                 "resuggest_domain_schema": "/api/aips/domains/suggest-schema"
             }

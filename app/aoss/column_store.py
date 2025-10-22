@@ -8,6 +8,9 @@ from app.aoss.aoss_client import create_aoss_client
 
 logger = logging.getLogger(__name__)
 
+# Constants
+METADATA_DOMAIN_FIELD = "metadata.domain"
+
 @dataclass
 class ColumnDoc:
     column_id: str                 # unique id (e.g., "customer_core.email" or UUID)
@@ -93,89 +96,103 @@ class OpenSearchColumnStore:
                 return  # This is OK
             raise
 
+    def _validate_docs(self, doc_list: List[ColumnDoc]) -> None:
+        """Validate documents before upserting."""
+        if not doc_list:
+            logger.warning("No documents to upsert")
+            return None
+
+        # Validate embedding dimensions
+        for i, doc in enumerate(doc_list):
+            if len(doc.embedding) != self.embedding_dim:
+                logger.error(f"Document {i} has embedding dimension {len(doc.embedding)}, expected {self.embedding_dim}")
+                raise ValueError(f"Embedding dimension mismatch for document {i}: got {len(doc.embedding)}, expected {self.embedding_dim}")
+
+    def _create_bulk_actions(self, doc_list: List[ColumnDoc]) -> List[Dict[str, Any]]:
+        """Create bulk actions for OpenSearch."""
+        return [{
+            "_index": self.index_name,
+            "_op_type": "index",
+            "_source": d.to_doc()
+        } for d in doc_list]
+
+    def _handle_bulk_operation(self, actions: List[Dict[str, Any]], request_timeout: int) -> int:
+        """Execute bulk operation with error handling."""
+        try:
+            success_count, failed_items = helpers.bulk(
+                self.client,
+                actions,
+                request_timeout=request_timeout,
+                max_retries=0,
+                chunk_size=10
+            )
+            
+            logger.info(f" Successfully upserted {success_count} documents")
+            
+            if failed_items:
+                logger.warning(f" {len(failed_items)} documents failed to upsert")
+                for failure in failed_items:
+                    logger.error(f"Failed item: {failure}")
+            
+            return success_count
+                    
+        except Exception as e:
+            self._handle_bulk_error(e)
+            raise
+
+    def _handle_bulk_error(self, exception: Exception) -> None:
+        """Handle and log bulk operation errors."""
+        logger.error(f" Bulk operation failed: {exception}")
+        logger.error(f"Exception type: {type(exception)}")
+        
+        if hasattr(exception, 'errors'):
+            logger.error(f"Bulk errors: {exception.errors}")
+            for i, error in enumerate(exception.errors):
+                logger.error(f"Error {i+1}: {error}")
+        
+        self._check_index_accessibility()
+
+    def _check_index_accessibility(self) -> None:
+        """Check if index is accessible and log its status."""
+        try:
+            index_info = self.client.indices.get(index=self.index_name)
+            logger.info(f"Index exists and is accessible: {self.index_name}")
+            logger.info(f"Index mappings: {index_info.get(self.index_name, {}).get('mappings', 'N/A')}")
+        except Exception as index_error:
+            logger.error(f"Cannot access index {self.index_name}: {index_error}")
+
+    def _handle_upsert_error(self, e: Exception, doc_list: Optional[List[ColumnDoc]] = None) -> None:
+        """Handle general upsert operation errors."""
+        logger.error(f" Upsert operation failed: {e}")
+        if doc_list:
+            logger.error(f"Index: {self.index_name}, Documents: {len(doc_list)}")
+        
+        if "AuthorizationException" in str(e):
+            logger.error(" Permission denied - check your AOSS Data Access Policy")
+        elif "timeout" in str(e).lower():
+            logger.error(" Request timeout - try reducing batch size or increasing timeout")
+        elif "ConnectionError" in str(e):
+            logger.error(" Connection error - check network and AOSS availability")
+
     def upsert_columns(self, docs: Iterable[ColumnDoc], request_timeout: int = 30) -> None:
-        """
-        Bulk upsert column documents. 'index' acts as upsert.
-        """
+        """Bulk upsert column documents. 'index' acts as upsert."""
         
         def _do_upsert():
-            """Internal upsert function for retry mechanism"""
             try:
-                # Ensure index exists before upserting
                 self.ensure_index()
-                
-                # Convert docs to list for logging and validation
                 doc_list = list(docs)
+                
+                self._validate_docs(doc_list)
                 if not doc_list:
-                    logger.warning("No documents to upsert")
                     return
-
-                # Validate embedding dimensions before creating actions
-                for i, doc in enumerate(doc_list):
-                    if len(doc.embedding) != self.embedding_dim:
-                        logger.error(f"Document {i} has embedding dimension {len(doc.embedding)}, expected {self.embedding_dim}")
-                        raise ValueError(f"Embedding dimension mismatch for document {i}: got {len(doc.embedding)}, expected {self.embedding_dim}")
-
-                # For OpenSearch Serverless VECTORSEARCH indices, we cannot specify _id
-                # Documents will be auto-assigned IDs by OpenSearch
-                actions = [{
-                    "_index": self.index_name,
-                    "_op_type": "index",
-                    "_source": d.to_doc()
-                } for d in doc_list]
-
+                
+                actions = self._create_bulk_actions(doc_list)
                 logger.info(f"Upserting {len(actions)} documents to {self.index_name}")
                 
-                # Use bulk helper with detailed error handling
-                try:
-                    success_count, failed_items = helpers.bulk(
-                        self.client, 
-                        actions, 
-                        request_timeout=request_timeout,
-                        max_retries=0,  # Disable internal retries to get clearer errors
-                        chunk_size=10   # Smaller chunks to avoid timeouts
-                    )
-                    
-                    logger.info(f" Successfully upserted {success_count} documents")
-                    
-                    if failed_items:
-                        logger.warning(f" {len(failed_items)} documents failed to upsert")
-                        for failure in failed_items:
-                            logger.error(f"Failed item: {failure}")
-                    
-                    return success_count
-                            
-                except Exception as bulk_exception:
-                    logger.error(f" Bulk operation failed: {bulk_exception}")
-                    logger.error(f"Exception type: {type(bulk_exception)}")
-                    
-                    # Try to extract more details from the exception
-                    if hasattr(bulk_exception, 'errors'):
-                        logger.error(f"Bulk errors: {bulk_exception.errors}")
-                        for i, error in enumerate(bulk_exception.errors):
-                            logger.error(f"Error {i+1}: {error}")
-                    
-                    # Check if it's a permission issue by trying to get index info
-                    try:
-                        index_info = self.client.indices.get(index=self.index_name)
-                        logger.info(f"Index exists and is accessible: {self.index_name}")
-                        logger.info(f"Index mappings: {index_info.get(self.index_name, {}).get('mappings', 'N/A')}")
-                    except Exception as index_error:
-                        logger.error(f"Cannot access index {self.index_name}: {index_error}")
-                    
-                    raise
-                    
-            except Exception as e:
-                logger.error(f" Upsert operation failed: {e}")
-                logger.error(f"Index: {self.index_name}, Documents: {len(list(doc_list)) if 'doc_list' in locals() else 'unknown'}")
+                return self._handle_bulk_operation(actions, request_timeout)
                 
-                if "AuthorizationException" in str(e):
-                    logger.error(" Permission denied - check your AOSS Data Access Policy")
-                elif "timeout" in str(e).lower():
-                    logger.error(" Request timeout - try reducing batch size or increasing timeout")
-                elif "ConnectionError" in str(e):
-                    logger.error(" Connection error - check network and AOSS availability")
-                    
+            except Exception as e:
+                self._handle_upsert_error(e, doc_list if 'doc_list' in locals() else None)
                 raise
 
         # Apply retry decorator to the internal function
@@ -210,7 +227,7 @@ class OpenSearchColumnStore:
 
         filter_clause = []
         if domain:
-            filter_clause.append({"term": {"metadata.domain": domain}})
+            filter_clause.append({"term": {METADATA_DOMAIN_FIELD: domain}})
         if table:
             filter_clause.append({"term": {"metadata.table": table}})
         if pii_only is not None:
@@ -242,7 +259,7 @@ class OpenSearchColumnStore:
         
         query = {
             "query": {
-                "term": {"metadata.domain": domain}
+                "term": {METADATA_DOMAIN_FIELD: domain}
             },
             "size": 100,  # Get up to 100 columns per domain
             "_source": fields
@@ -331,7 +348,7 @@ class OpenSearchColumnStore:
                 "aggs": {
                     "unique_domains": {
                         "terms": {
-                            "field": "metadata.domain",
+                            "field": METADATA_DOMAIN_FIELD,
                             "size": 1000  # Max domains to return
                         }
                     }

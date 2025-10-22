@@ -19,6 +19,8 @@ from app.agents.agent_runner import (
 
 logger = logging.getLogger(__name__)
 
+SCHEMA_REQUIRED_ERROR = "Schema is required"
+
 router = APIRouter(
     prefix="/api/aips/agent",
     tags=["agent-insights"],
@@ -33,7 +35,7 @@ async def analyze_schema_with_insights(request_data: Dict[str, Any]):
     try:
         schema = request_data.get("schema")
         if not schema:
-            raise HTTPException(status_code=400, detail="Schema is required")
+            raise HTTPException(status_code=400, detail=SCHEMA_REQUIRED_ERROR)
         
         # Initialize enhanced state for tracking
         initial_state = AgentState(data_schema=schema)
@@ -102,7 +104,7 @@ async def create_analysis_plan(request_data: Dict[str, Any]):
     try:
         schema = request_data.get("schema")
         if not schema:
-            raise HTTPException(status_code=400, detail="Schema is required")
+            raise HTTPException(status_code=400, detail=SCHEMA_REQUIRED_ERROR)
             
         plan = create_agent_plan(schema)
         
@@ -133,7 +135,7 @@ async def trace_agent_execution(request_data: Dict[str, Any]):
     try:
         schema = request_data.get("schema")
         if not schema:
-            raise HTTPException(status_code=400, detail="Schema is required")
+            raise HTTPException(status_code=400, detail=SCHEMA_REQUIRED_ERROR)
             
         # Execute with full tracing
         graph = build_graph()
@@ -190,7 +192,7 @@ async def generate_execution_report(request_data: Dict[str, Any]):
     try:
         schema = request_data.get("schema")
         if not schema:
-            raise HTTPException(status_code=400, detail="Schema is required")
+            raise HTTPException(status_code=400, detail=SCHEMA_REQUIRED_ERROR)
             
         # Execute agent
         graph = build_graph()

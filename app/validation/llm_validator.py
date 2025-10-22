@@ -432,6 +432,40 @@ class LLMResponseValidator:
         else:
             return any(issue.severity == ValidationSeverity.CRITICAL for issue in issues)
     
+    def _check_required_top_level_fields(self, response: Dict[str, Any]) -> List[ValidationIssue]:
+        """Check for required top-level fields in the response"""
+        issues = []
+        required_fields = ["rules", "explanation"]
+        for field in required_fields:
+            if field not in response:
+                issues.append(ValidationIssue(
+                    field=field,
+                    message=f"Required field '{field}' is missing",
+                    severity=ValidationSeverity.CRITICAL
+                ))
+        return issues
+
+    def _validate_single_rule(self, rule: Any, index: int) -> List[ValidationIssue]:
+        """Validate a single rule's structure and required fields"""
+        issues = []
+        if not isinstance(rule, dict):
+            issues.append(ValidationIssue(
+                field=f"rules[{index}]",
+                message="Rule must be a dictionary",
+                severity=ValidationSeverity.HIGH
+            ))
+            return issues
+
+        rule_required_fields = ["condition", "action", "description"]
+        for rule_field in rule_required_fields:
+            if rule_field not in rule:
+                issues.append(ValidationIssue(
+                    field=f"rules[{index}].{rule_field}",
+                    message=f"Rule field '{rule_field}' is missing",
+                    severity=ValidationSeverity.HIGH
+                ))
+        return issues
+
     def validate_rule_response(self, response: Dict[str, Any]) -> ValidationResult:
         """
         Validate LLM response for rule generation
@@ -442,44 +476,21 @@ class LLMResponseValidator:
         Returns:
             ValidationResult with validation details
         """
-        issues = []
-        
-        # Check for required fields
-        required_fields = ["rules", "explanation"]
-        for field in required_fields:
-            if field not in response:
-                issues.append(ValidationIssue(
-                    field=field,
-                    message=f"Required field '{field}' is missing",
-                    severity=ValidationSeverity.CRITICAL
-                ))
+        # Collect validation issues
+        issues = self._check_required_top_level_fields(response)
         
         # Validate rules structure
         rules = response.get("rules", [])
         if isinstance(rules, list):
             for i, rule in enumerate(rules):
-                if not isinstance(rule, dict):
-                    issues.append(ValidationIssue(
-                        field=f"rules[{i}]",
-                        message="Rule must be a dictionary",
-                        severity=ValidationSeverity.HIGH
-                    ))
-                else:
-                    # Validate rule fields
-                    rule_required_fields = ["condition", "action", "description"]
-                    for rule_field in rule_required_fields:
-                        if rule_field not in rule:
-                            issues.append(ValidationIssue(
-                                field=f"rules[{i}].{rule_field}",
-                                message=f"Rule field '{rule_field}' is missing",
-                                severity=ValidationSeverity.HIGH
-                            ))
+                issues.extend(self._validate_single_rule(rule, i))
         
-        confidence_score = self._calculate_confidence_score(issues, len(rules) if isinstance(rules, list) else 0)
-        is_valid = not self.has_blocking_issues(issues)
+        # Calculate final results
+        num_rules = len(rules) if isinstance(rules, list) else 0
+        confidence_score = self._calculate_confidence_score(issues, num_rules)
         
         return ValidationResult(
-            is_valid=is_valid,
+            is_valid=not self.has_blocking_issues(issues),
             issues=issues,
             confidence_score=confidence_score
         )

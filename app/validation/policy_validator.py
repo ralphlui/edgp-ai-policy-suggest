@@ -12,6 +12,9 @@ from app.validation.llm_validator import (
     LLMContentValidator, InputSanitizer
 )
 
+# Constant pattern for valid identifiers (used for column names, table names, and rule names)
+VALID_IDENTIFIER_PATTERN = r'^[a-zA-Z][a-zA-Z0-9_]*$'
+
 logger = logging.getLogger(__name__)
 
 
@@ -76,13 +79,13 @@ class PolicyContentValidator(LLMContentValidator):
                 "governance_framework", "regulatory_compliance"
             ],
             schema_patterns={
-                "valid_column_name": r'^[a-zA-Z][a-zA-Z0-9_]*$',
-                "valid_table_name": r'^[a-zA-Z][a-zA-Z0-9_]*$',
+                "valid_column_name": VALID_IDENTIFIER_PATTERN,
+                "valid_table_name": VALID_IDENTIFIER_PATTERN,
                 "valid_domain_name": r'^[a-z0-9_-]+$'
             },
             rule_patterns={
                 "gx_rule_format": r'expect_[a-z_]+',
-                "valid_rule_name": r'^[a-zA-Z][a-zA-Z0-9_]*$'
+                "valid_rule_name": VALID_IDENTIFIER_PATTERN
             },
             severity_overrides={
                 "pii_email": ValidationSeverity.LOW,  # Often legitimate in business context

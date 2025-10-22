@@ -470,8 +470,7 @@ def _handle_agent_error(e: Exception, domain: str, validation_start_time: float)
             domain=domain,
             response_type="rule",
             validation_result=failed_result,
-            validation_time_ms=validation_time_ms,
-            metadata={"failure_type": "agent_execution_error"}
+            validation_time_ms=validation_time_ms
         )
     except Exception as metrics_error:
         logger.warning(f"Failed to record failure metrics: {metrics_error}")
@@ -495,7 +494,7 @@ def run_agent(schema: dict) -> List[Dict[str, Any]]:
         validation_context = _setup_validation_context(domain, schema)
         
         with validation_context if validation_context else None as validator:
-            logger.info(f"🤖 Starting enhanced agentic workflow for domain: {domain}")
+            logger.info(f" Starting enhanced agentic workflow for domain: {domain}")
             
             # Initialize and run
             initial_state = AgentState(data_schema=schema)
@@ -534,13 +533,7 @@ def run_agent(schema: dict) -> List[Dict[str, Any]]:
                         domain=domain,
                         response_type="rule",
                         validation_result=validation_result,
-                        validation_time_ms=(time.time() - validation_start_time) * 1000,
-                        metadata={
-                            "agent_type": "enhanced_react",
-                            "reasoning_steps": len(thoughts),
-                            "reflection_cycles": len(reflections),
-                            "total_execution_time": execution_metrics.get("total_execution_time", 0)
-                        }
+                        validation_time_ms=(time.time() - validation_start_time) * 1000
                     )
                 except Exception as e:
                     logger.warning(f"Failed to record enhanced validation metrics: {e}")

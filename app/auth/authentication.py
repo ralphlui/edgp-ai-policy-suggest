@@ -29,6 +29,9 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Constants
+MANAGE_POLICY_SCOPE = "manage:policy"
+
 # Security scheme for FastAPI documentation
 security = HTTPBearer()
 
@@ -420,7 +423,7 @@ async def verify_jwt_token(
         
         # Check scope permissions if required_scopes specified
         if required_scopes is None:
-            required_scopes = ["manage:policy"]  # Only require manage:policy scope
+            required_scopes = [MANAGE_POLICY_SCOPE]  # Only require manage:policy scope
         
         if required_scopes and not token_validator.check_scope_permissions(token_payload, required_scopes):
             raise HTTPException(
@@ -453,15 +456,15 @@ async def verify_jwt_token(
 # Convenience dependencies for specific scopes
 async def verify_policy_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> UserInfo:
     """Verify token with manage:policy scope only"""
-    return await verify_jwt_token(credentials, required_scopes=["manage:policy"])
+    return await verify_jwt_token(credentials, required_scopes=[MANAGE_POLICY_SCOPE])
 
 async def verify_mdm_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> UserInfo:
     """Verify token with manage:policy scope only"""
-    return await verify_jwt_token(credentials, required_scopes=["manage:policy"])
+    return await verify_jwt_token(credentials, required_scopes=[MANAGE_POLICY_SCOPE])
 
 async def verify_any_scope_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> UserInfo:
     """Verify token with manage:policy scope only"""
-    return await verify_jwt_token(credentials, required_scopes=["manage:policy"])
+    return await verify_jwt_token(credentials, required_scopes=[MANAGE_POLICY_SCOPE])
 
 # Optional dependency for endpoints that can work with or without authentication
 async def optional_jwt_token(
