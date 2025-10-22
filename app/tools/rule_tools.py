@@ -258,8 +258,14 @@ def suggest_column_rules(data_schema: dict, gx_rules: list) -> str:
             batch_rules.extend([r for r in type_specific_rules if r not in batch_rules])
             
             # Enhanced prompt with type-specific context
+            # Generate column type descriptions
+            column_type_info = []
+            for k in batch_columns:
+                col_type = data_schema[k].get("type", "unknown")
+                column_type_info.append(f"{k}({col_type})")
+            
             prompt = get_enhanced_rule_prompt(domain, batch_schema, batch_rules)
-            prompt += f"\nNote: Generate specific rules for each column based on its type. For {', '.join(batch_columns)}, consider their types: {', '.join(f'{k}({data_schema[k].get('type', 'unknown')})' for k in batch_columns)}."
+            prompt += f"\nNote: Generate specific rules for each column based on its type. For {', '.join(batch_columns)}, consider their types: {', '.join(column_type_info)}."
             
             result = _process_llm_request(llm, prompt)
             
