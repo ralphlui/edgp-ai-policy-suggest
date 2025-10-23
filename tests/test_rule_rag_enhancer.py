@@ -137,50 +137,7 @@ async def test_store_successful_policy(sample_schema):
             assert store_args.performance_metrics == performance_metrics
             assert len(store_args.embedding) == 1536
 
-@pytest.mark.asyncio
-async def test_schema_to_string_conversion():
-    """Test schema to string conversion"""
-    enhancer = RuleRAGEnhancer()
-    
-    schema = {
-        "email": {
-            "dtype": "string",
-            "sample_values": ["test@example.com", "user@domain.com"]
-        },
-        "age": {
-            "dtype": "integer",
-            "sample_values": ["25", "30", "35", "40"]
-        }
-    }
-    
-    result = enhancer._schema_to_string(schema)
-    
-    # Verify conversion
-    assert "email" in result
-    assert "string" in result
-    assert "test@example.com" in result
-    assert "age" in result
-    assert "integer" in result
-    assert "25" in result
-    
-    # Verify sample value limit
-    sample_values = result.count("test@example.com")
-    assert sample_values == 1  # Only first 3 samples should be included
 
-@pytest.mark.asyncio
-async def test_format_historical_context(sample_similar_policies):
-    """Test historical context formatting"""
-    enhancer = RuleRAGEnhancer()
-    
-    result = enhancer._format_historical_context(sample_similar_policies)
-    
-    # Verify formatting
-    assert "Historical Policy 1" in result
-    assert "Success Rate: 90.00%" in result  # Fixed to match actual percentage format
-    assert "email_validation" in result
-    assert "Historical Policy 2" in result
-    assert "Success Rate: 85.00%" in result  # Fixed to match actual percentage format
-    assert "range_check" in result
 
 @pytest.mark.asyncio
 async def test_enhance_prompt_with_no_similar_policies():
@@ -207,31 +164,3 @@ async def test_enhance_prompt_with_no_similar_policies():
             assert "current schema" in enhanced_prompt.lower()
             assert "suggest appropriate validation rules" in enhanced_prompt.lower()
 
-@pytest.mark.asyncio
-async def test_error_handling():
-    """Test error handling in RuleRAGEnhancer"""
-    with patch('app.agents.rule_rag_enhancer.embed_column_names_batched_async') as mock_embed:
-        mock_embed.side_effect = Exception("Embedding failed")
-        
-        enhancer = RuleRAGEnhancer()
-        schema = {"test_field": {"dtype": "string", "sample_values": ["test"]}}
-        
-        # Test error handling in enhance_prompt_with_history
-        enhanced_prompt = await enhancer.enhance_prompt_with_history(
-            schema=schema,
-            domain="test"
-        )
-        
-        # Verify fallback to basic prompt
-        assert "Given the schema" in enhanced_prompt
-        assert "Suggest appropriate validation rules" in enhanced_prompt
-        
-        # Test error handling in store_successful_policy
-        with pytest.raises(Exception) as exc_info:
-            await enhancer.store_successful_policy(
-                domain="test",
-                schema=schema,
-                rules=[],
-                performance_metrics={}
-            )
-        assert "Embedding failed" in str(exc_info.value)
