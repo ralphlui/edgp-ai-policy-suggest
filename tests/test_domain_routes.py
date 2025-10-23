@@ -165,6 +165,9 @@ def test_download_csv_success_after_create(client, monkeypatch, mock_embeddings)
     store = FakeStore(domains=[])
     monkeypatch.setattr(domains_module, "get_store", lambda: store)
 
+    # Clear any existing file mappings
+    domains_module.clear_file_mappings()
+
     class _FakeRunner:
         @staticmethod
         def run_agent(schema):
@@ -175,23 +178,33 @@ def test_download_csv_success_after_create(client, monkeypatch, mock_embeddings)
     body = {"domain": "Leads", "columns": ["email"], "return_csv": True}
     resp = client.post("/api/aips/domains/create", json=body)
     assert resp.status_code == 200
-    filename = resp.json()["csv_download"]["filename"]
+    response_data = resp.json()
+    
+    # Extract file ID from download URL
+    download_url = response_data["csv_download"]["download_url"]
+    file_id = download_url.split("/")[-1]
 
-    # Now download it
-    dl = client.get(f"/api/aips/domains/download-csv/{filename}")
+    # Now download it using the file ID
+    dl = client.get(f"/api/aips/domains/download-csv/{file_id}")
     assert dl.status_code == 200
     assert dl.headers["content-type"].startswith("text/csv")
+    
+    # Clean up file mappings after test
+    domains_module.clear_file_mappings()
 
 def test_download_csv_invalid_name(client):
-    # No slashes so FastAPI routes correctly; contains '..' and endswith .csv → 400
-    resp = client.get("/api/aips/domains/download-csv/evil..csv")
+    # Test with invalid UUID format
+    resp = client.get("/api/aips/domains/download-csv/not-a-uuid")
     assert resp.status_code == 400
+    data = resp.json()
+    assert "Invalid file ID format" in data["error"]
 
 def test_download_csv_wrong_extension_returns_400(client):
-    # Reaches handler (no slash), wrong extension → 400
-    resp = client.get("/api/aips/domains/download-csv/evil.txt")
-    # Route exists but handler returns 400 for invalid filename
+    # Test with invalid UUID format ending with .txt
+    resp = client.get("/api/aips/domains/download-csv/not-a-uuid.txt")
     assert resp.status_code == 400
+    data = resp.json()
+    assert "Invalid file ID format" in data["error"]
 
 
 # ---------- Tests: / (list) and /verify/{domain} ----------

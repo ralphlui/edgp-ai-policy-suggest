@@ -7,6 +7,7 @@ import sys
 import pytest
 import tempfile
 import os
+import uuid
 from unittest.mock import Mock, patch, AsyncMock
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
@@ -373,25 +374,32 @@ class TestSchemaEndpointErrors:
 
 
 class TestDownloadCSVEdgeCases:
-    """Test CSV download edge cases - Lines 521-551"""
+    """Test CSV download edge cases with secure file ID system"""
     
     def test_download_csv_missing_file(self, client):
-        """Test downloading non-existent CSV file"""
-        response = client.get("/api/aips/domains/download-csv/nonexistent.csv")
+        """Test downloading with non-existent file ID"""
+        # Use a random UUID that won't exist in the mappings
+        file_id = str(uuid.uuid4())
+        response = client.get(f"/api/aips/domains/download-csv/{file_id}")
         
         assert response.status_code == 404
         data = response.json()
-        assert "not found" in data["error"].lower()
-    
-    def test_download_csv_invalid_filename_security(self, client):
-        """Test security validation of filenames"""
-        # Path traversal attempt
-        response = client.get("/api/aips/domains/download-csv/../../etc/passwd.csv")
-        assert response.status_code in [400, 404]  # May be 404 due to routing
-        
-        # Invalid extension
-        response = client.get("/api/aips/domains/download-csv/test.exe")
+        assert "File not found" in data["error"]
+
+    def test_download_csv_invalid_file_id(self, client):
+        """Test security validation of file IDs"""
+        # Test invalid UUID format
+        response = client.get("/api/aips/domains/download-csv/invalid-id")
         assert response.status_code == 400
+        data = response.json()
+        assert "Invalid file ID format" in data["error"]
+        
+        # Test with a valid UUID that doesn't exist in mappings
+        test_uuid = "12345678-1234-5678-1234-567812345678"
+        response = client.get(f"/api/aips/domains/download-csv/{test_uuid}")
+        assert response.status_code == 404  # UUID format valid but not found
+        data = response.json()
+        assert "File not found" in data["error"]
 
 
 class TestAISuggestEndpoints:
@@ -564,6 +572,42 @@ class TestComplexErrorScenarios:
             
             # Should handle or reject special characters appropriately
             assert response.status_code in [200, 400, 500]
+
+
+@pytest.fixture(autouse=True)
+def clean_up_csv_files():
+    """Clean up any file mappings before and after each test"""
+    domains_module.clear_file_mappings()
+    yield
+    domains_module.clear_file_mappings()
+
+
+class TestDownloadCSVEdgeCases:
+    """Test CSV download edge cases with secure file ID system"""
+
+    def test_download_csv_missing_file(self, client):
+        """Test downloading with non-existent file ID"""
+        # Use a random UUID that won't exist in the mappings
+        file_id = str(uuid.uuid4())
+        response = client.get(f"/api/aips/domains/download-csv/{file_id}")
+        assert response.status_code == 404
+        data = response.json()
+        assert "File not found" in data["error"]
+
+    def test_download_csv_invalid_file_id(self, client):
+        """Test security validation of file IDs"""
+        # Test invalid UUID format
+        response = client.get("/api/aips/domains/download-csv/invalid-id")
+        assert response.status_code == 400
+        data = response.json()
+        assert "Invalid file ID format" in data["error"]
+        
+        # Test with a valid UUID that doesn't exist in mappings
+        test_uuid = "12345678-1234-5678-1234-567812345678"
+        response = client.get(f"/api/aips/domains/download-csv/{test_uuid}")
+        assert response.status_code == 404  # UUID format valid but not found
+        data = response.json()
+        assert "File not found" in data["error"]
 
 
 class TestConfigurationAndSettings:

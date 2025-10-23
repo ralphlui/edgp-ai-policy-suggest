@@ -10,6 +10,9 @@ import logging, time, io, csv
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/aips/domains", tags=["domain-schema"])
 
+# Constants
+EXTEND_SCHEMA_ENDPOINT = "/api/aips/domains/extend-schema"
+
 # --- Domain & Schema Endpoints ---
 
 # Helper functions
@@ -103,7 +106,7 @@ async def create_domain(
                         "actions": {
                             "extend-schema": {
                                 "description": "Add new columns to existing domain",
-                                "endpoint": "/api/aips/domains/extend-schema",
+                                "endpoint": EXTEND_SCHEMA_ENDPOINT,
                                 "method": "POST",
                                 "payload": {
                                     "domain": existing_domain,
@@ -313,14 +316,17 @@ async def create_domain(
             import os
             
             # Create a temporary file for CSV
-            temp_dir = tempfile.gettempdir()
+            temp_dir = Path(tempfile.gettempdir())
             csv_filename = f"{normalized_domain}_schema_{int(__import__('time').time())}.csv"
-            csv_path = os.path.join(temp_dir, csv_filename)
+            csv_path = temp_dir / csv_filename
             
             # Create CSV with just column headers (no sample data) using built-in csv module
             with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
                 writer = csv.writer(csvfile)
                 writer.writerow(column_names)  # Write header row
+            
+            # Register the file securely and get a download ID
+            file_id = register_csv_file(csv_filename, str(csv_path))
             
             # Return JSON response with rule suggestions AND CSV download info
             # Build response with appropriate rule messaging
@@ -339,7 +345,7 @@ async def create_domain(
                 "csv_download": {
                     "available": True,
                     "filename": csv_filename,
-                    "download_url": f"{request.base_url}api/aips/download-csv/{csv_filename}",
+                    "download_url": f"{request.base_url}api/aips/download-csv/{file_id}",
                     "type": "template",
                     "description": "CSV file with column headers.",
                     "columns": column_names
@@ -640,34 +646,86 @@ async def get_domain_from_vectordb(domain_name: str):
         }, status_code=500)
 
 
-@router.get("/download-csv/{filename}")
-async def download_csv_file(filename: str):
-    """Download CSV file generated during domain creation."""
+import uuid
+import re
+import tempfile
+from pathlib import Path
+
+# Global dictionary to store secure filename mappings
+# Key: public_id (UUID), Value: tuple(original_filename, actual_path)
+SECURE_FILE_MAPPINGS = {}
+
+def register_csv_file(original_filename: str, file_path: str) -> str:
+    """Register a CSV file and return a secure public ID for downloading."""
+    public_id = str(uuid.uuid4())
+    SECURE_FILE_MAPPINGS[public_id] = (original_filename, file_path)
+    return public_id
+
+def is_safe_filename(filename: str) -> bool:
+    """Validate filename using strict pattern matching."""
+    # Only allow alphanumeric chars, underscore, hyphen, and .csv extension
+    pattern = re.compile(r'^[a-zA-Z0-9_-]+\.csv$')
+    return bool(pattern.match(filename))
+
+def clear_file_mappings():
+    """Clear all secure file mappings. Used for testing only."""
+    SECURE_FILE_MAPPINGS.clear()
+
+def get_test_file_id(original_filename: str, file_path: str) -> str:
+    """Register a test file and get its ID. Used for testing only."""
+    return register_csv_file(original_filename, file_path)
+
+@router.get("/download-csv/{file_id}")
+async def download_csv_file(file_id: str):
+    """Download CSV file generated during domain creation using a secure file ID."""
     try:
-        import tempfile
-        import os
         from fastapi.responses import FileResponse
         
-        # Security check - only allow specific filename pattern
-        if not filename.endswith('.csv') or '..' in filename or '/' in filename:
+        # Validate file_id format
+        try:
+            uuid.UUID(file_id)  # Validate UUID format
+        except ValueError:
             return JSONResponse({
-                "error": "Invalid filename"
+                "error": "Invalid file ID format"
             }, status_code=400)
         
-        temp_dir = tempfile.gettempdir()
-        csv_path = os.path.join(temp_dir, filename)
-        
-        if not os.path.exists(csv_path):
+        # Look up the actual file information
+        if file_id not in SECURE_FILE_MAPPINGS:
             return JSONResponse({
-                "error": "CSV file not found or expired",
+                "error": "File not found or expired",
+                "message": "The CSV file may have been cleaned up. Please regenerate the domain."
+            }, status_code=404)
+        
+        original_filename, file_path = SECURE_FILE_MAPPINGS[file_id]
+        
+        # Verify the path still exists and is within temp directory
+        temp_dir = Path(tempfile.gettempdir())
+        file_path = Path(file_path)
+        
+        try:
+            # Ensure the file is actually within the temp directory
+            file_path.relative_to(temp_dir)
+        except ValueError:
+            # File is outside temp directory - security violation
+            del SECURE_FILE_MAPPINGS[file_id]  # Remove compromised mapping
+            return JSONResponse({
+                "error": "Security violation",
+                "message": "Invalid file location"
+            }, status_code=403)
+        
+        if not file_path.exists():
+            # Clean up the mapping if file doesn't exist
+            del SECURE_FILE_MAPPINGS[file_id]
+            return JSONResponse({
+                "error": "File not found or expired",
                 "message": "The CSV file may have been cleaned up. Please regenerate the domain."
             }, status_code=404)
         
         # Return the file for download
         return FileResponse(
-            csv_path,
+            str(file_path),
             media_type="text/csv",
-            filename=filename
+            filename=original_filename
         )
         
     except Exception as e:
@@ -755,7 +813,7 @@ Focus on identifying missing business dimensions and valuable extensions to the 
                     "note": "Additional columns suggested for existing domain. These will extend the current schema.",
                     "extend_schema_with_csv": {
                         "description": "Extend existing schema with suggested columns and generate CSV",
-                        "endpoint": "/api/aips/domains/extend-schema",
+                        "endpoint": EXTEND_SCHEMA_ENDPOINT,
                         "method": "PUT",
                         "payload": {
                             "domain": existing_domain_name,
@@ -770,7 +828,7 @@ Focus on identifying missing business dimensions and valuable extensions to the 
                     },
                     "extend_schema_only": {
                         "description": "Extend existing schema with suggested columns",
-                        "endpoint": "/api/aips/domains/extend-schema",
+                        "endpoint": EXTEND_SCHEMA_ENDPOINT,
                         "method": "PUT",
                         "payload": {
                             "domain": existing_domain_name,
@@ -1104,7 +1162,7 @@ async def extend_domain(request: Request):
             "actions": {
                 "suggest_more": f"/api/aips/domains/suggest-extend-schema/{domain_name}",
                 "view_domain": f"/api/aips/domains/{domain_name}",
-                "regenerate_extensions": "/api/aips/domains/extend-schema"
+                "regenerate_extensions": EXTEND_SCHEMA_ENDPOINT
             }
         })
         
@@ -1233,7 +1291,7 @@ async def suggest_extensions(domain_name: str, request: Request):
             "suggestions": suggestions_by_focus,
             "existing_columns": [col.get("column_name") for col in existing_columns],
             "actions": {
-                "extend_domain": "/api/aips/domains/extend-schema",
+                "extend_domain": EXTEND_SCHEMA_ENDPOINT,
                 "view_domain": f"/api/aips/domains/{domain_name}",
                 "resuggest_domain_schema": "/api/aips/domains/suggest-schema"
             }

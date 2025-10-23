@@ -301,8 +301,11 @@ class TestRuleToolsModule:
         mock_response.content = '[{"column": "test", "expectations": []}]'
         mock_llm.invoke.return_value = mock_response
         mock_chat_openai.return_value = mock_llm
-        
-        from app.tools.rule_tools import suggest_column_rules
+
+        # Test that ChatOpenAI is initialized with the right model
+        with patch('app.tools.rule_tools.settings') as mock_settings:
+            mock_settings.schema_llm_model = 'test-model'
+            from app.tools.rule_tools import suggest_column_rules
         
         # Test with different column types
         schema = {
