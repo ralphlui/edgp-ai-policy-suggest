@@ -463,14 +463,9 @@ def _handle_agent_error(e: Exception, domain: str, validation_start_time: float)
                 field="enhanced_agent_execution",
                 severity=ValidationSeverity.CRITICAL,
                 message=f"Enhanced agent workflow failed: {str(e)}",
-                suggestion="Check logs, validate configuration, and retry with simpler approach"
+                suggested_fix="Check logs, validate configuration, and retry with simpler approach"
             )],
-            corrected_data=None,
-            metadata={
-                "error": str(e),
-                "agent_type": "enhanced_react",
-                "failure_stage": "execution"
-            }
+            corrected_data=None
         )
         
         record_validation_metric(

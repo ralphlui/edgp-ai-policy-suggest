@@ -146,14 +146,14 @@ async def get_validation_config() -> Dict[str, Any]:
         
         # Convert to dict for JSON serialization
         config_dict = {
-            "profile": config.profile.value,
-            "max_issues_allowed": config.max_issues_allowed,
+            "strict_mode": config.strict_mode,
+            "auto_correct": config.auto_correct,
             "min_confidence_score": config.min_confidence_score,
-            "enable_auto_correction": config.enable_auto_correction,
-            "schema_validation_enabled": config.schema_validation_enabled,
-            "rule_validation_enabled": config.rule_validation_enabled,
-            "content_validation_enabled": config.content_validation_enabled,
-            "domain_rules_count": len(config.domain_rules)
+            "min_columns": config.min_columns,
+            "max_columns": config.max_columns,
+            "check_pii": config.check_pii,
+            "check_sensitive_keywords": config.check_sensitive_keywords,
+            "validation_timeout": config.validation_timeout
         }
         
         return {
@@ -241,12 +241,11 @@ async def test_validation(
                     "field": issue.field,
                     "severity": issue.severity.value,
                     "message": issue.message,
-                    "suggestion": issue.suggestion
+                    "suggestion": issue.suggested_fix
                 }
                 for issue in validation_result.issues
             ],
-            "corrected_data": validation_result.corrected_data,
-            "metadata": validation_result.metadata
+            "corrected_data": validation_result.corrected_data
         }
         
         return {
@@ -280,7 +279,7 @@ async def get_validation_stats() -> Dict[str, Any]:
         performance_check = _validation_monitor.check_performance(1)
         
         stats = {
-            "config_profile": config.profile.value,
+            "config_mode": "strict" if config.strict_mode else "lenient",
             "hourly_metrics": {
                 "success_rate": hourly_summary["success_rate"],
                 "avg_confidence": hourly_summary["avg_confidence"],
