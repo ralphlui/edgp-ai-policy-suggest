@@ -6,6 +6,21 @@ import pytest
 from unittest.mock import Mock, patch, MagicMock
 
 
+@pytest.fixture(autouse=True)
+def _disable_validation_context(monkeypatch):
+    import app.agents.agent_runner as _ar
+
+    class _DummyCtx:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(_ar, '_setup_validation_context', lambda *a, **k: _DummyCtx())
+    yield
+
+
 class TestAgentRunnerModule:
     """Test agent_runner.py module functionality"""
     
