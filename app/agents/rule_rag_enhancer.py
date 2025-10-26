@@ -23,22 +23,35 @@ class RuleRAGEnhancer:
     ) -> str:
         """Enhance the prompt with relevant historical context"""
         try:
+            logger.info(f"Starting RAG enhancement for domain: {domain}")
+            logger.info(f"Schema contains {len(schema)} columns")
+
             # Generate embedding for the current schema
+            logger.info("Converting schema to string format for embedding")
             schema_str = self._schema_to_string(schema)
+            logger.debug(f"Schema string generated: {len(schema_str)} characters")
+            
+            logger.info("Generating embeddings for schema")
             schema_embedding = await embed_column_names_batched_async([schema_str])
+            logger.info(f"Embedding generated successfully: {len(schema_embedding[0])} dimensions")
             
             # Retrieve similar policies
+            logger.info(f"Retrieving similar policies for domain {domain} with min success rate 0.8")
             similar_policies = await self.policy_store.retrieve_similar_policies(
                 query_embedding=schema_embedding[0],
                 domain=domain,
                 min_success_rate=0.8,
                 top_k=3
             )
+            logger.info(f"Found {len(similar_policies)} similar policies")
 
             # Format historical context
+            logger.info("Formatting historical context from similar policies")
             historical_context = self._format_historical_context(similar_policies)
+            logger.debug(f"Historical context generated: {len(historical_context)} characters")
 
             # Build enhanced prompt
+            logger.info("Building enhanced prompt with historical context")
             prompt = f"""
 Given the current schema:
 {schema_str}
@@ -59,7 +72,8 @@ Ensure the suggested rules:
             return prompt
 
         except Exception as e:
-            logger.error(f"Failed to enhance prompt with history: {e}")
+            logger.error(f"Failed to enhance prompt with history: {e}", exc_info=True)
+            logger.warning("Falling back to basic prompt without historical context")
             # Return a basic prompt as fallback
             return f"Given the schema: {schema_str}\nSuggest appropriate validation rules."
 
@@ -72,13 +86,23 @@ Ensure the suggested rules:
     ):
         """Store successful policy for future reference"""
         try:
+            logger.info(f"Starting to store successful policy for domain: {domain}")
+            logger.info(f"Policy contains {len(rules)} rules with performance metrics: {performance_metrics}")
+
             # Generate embedding for the schema
+            logger.info("Converting schema to string format for embedding")
             schema_str = self._schema_to_string(schema)
+            logger.debug(f"Schema string generated: {len(schema_str)} characters")
+
+            logger.info("Generating embeddings for schema storage")
             schema_embedding = await embed_column_names_batched_async([schema_str])
+            logger.info(f"Embedding generated successfully: {len(schema_embedding[0])} dimensions")
 
             # Create policy document
+            policy_id = str(uuid.uuid4())
+            logger.info(f"Creating policy document with ID: {policy_id}")
             policy = PolicyHistoryDoc(
-                policy_id=str(uuid.uuid4()),
+                policy_id=policy_id,
                 domain=domain,
                 schema=schema,
                 rules=rules,
@@ -93,11 +117,14 @@ Ensure the suggested rules:
             )
 
             # Store the policy
+            logger.info(f"Storing policy {policy_id} in policy history store")
             await self.policy_store.store_policy(policy)
-            logger.info(f"Stored successful policy for domain {domain}")
+            logger.info(f"Successfully stored policy {policy_id} for domain {domain}")
+            logger.debug(f"Policy metrics: success_rate={performance_metrics.get('success_rate', 0):.2%}")
 
         except Exception as e:
-            logger.error(f"Failed to store successful policy: {e}")
+            logger.error(f"Failed to store successful policy: {e}", exc_info=True)
+            logger.error(f"Domain: {domain}, Rule count: {len(rules)}, Schema size: {len(schema)}")
             raise
 
     def _schema_to_string(self, schema: Dict[str, Any]) -> str:
