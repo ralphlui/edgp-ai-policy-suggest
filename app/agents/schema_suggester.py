@@ -87,7 +87,7 @@ class ColumnSchema(BaseModel):
 
 class SchemaResponse(BaseModel):
     """Pydantic model for LLM schema response"""
-    columns: List[ColumnSchema] = Field(..., min_length=1, max_length=50)
+    columns: List[ColumnSchema] = Field(..., min_length=5, max_length=50)
 
 
 # =============================================================================
