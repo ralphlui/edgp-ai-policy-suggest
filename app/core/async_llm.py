@@ -1,7 +1,7 @@
 """Async LLM processing utilities"""
 import asyncio
 from typing import List, Dict, Any
-from langchain_community.chat_models import ChatOpenAI
+from langchain_openai import ChatOpenAI
 import logging
 from langchain_core.messages import HumanMessage
 
@@ -20,7 +20,7 @@ async def process_single(llm: ChatOpenAI, prompt: str) -> str:
 async def process_batch_async(
     llm: ChatOpenAI, 
     prompts: List[str],
-    max_concurrent: int = 3
+    max_concurrent: int = 5  # Increased concurrency
 ) -> List[str]:
     """Process multiple prompts concurrently with rate limiting"""
     

@@ -650,5 +650,5 @@ class TestRuleToolsUtilities:
             # Check structure of default rules
             for rule in result:
                 assert "rule_name" in rule
-                assert "description" in rule
-                assert "applies_to" in rule
+                assert "column_name" in rule
+                assert "value" in rule  # Changed to check for required fields instead of description

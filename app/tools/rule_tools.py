@@ -1,5 +1,5 @@
 from langchain.agents import tool
-from langchain_community.chat_models import ChatOpenAI
+from langchain_openai import ChatOpenAI
 from app.core.config import settings
 from app.aws.aws_secrets_service import require_openai_api_key
 from app.prompt.prompt_config import get_enhanced_rule_prompt, get_enhanced_column_prompt
@@ -43,309 +43,444 @@ def _get_default_rules() -> list:
     """Return default GX rules when service is unavailable"""
     return [
         {
-            "rule_name": "expect_column_values_to_not_be_null",
-            "description": "Validate that column values are not null",
-            "applies_to": ["all"]
+            "rule_name": "ExpectColumnDistinctValuesToBeInSet",
+            "column_name": "test",
+            "value": [1, 2, 3, 4, 5]
         },
         {
-            "rule_name": "expect_column_values_to_be_of_type",
-            "description": "Validate column data type",
-            "applies_to": ["all"]
+            "rule_name": "ExpectColumnValuesToBeInSet",
+            "column_name": "test",
+            "value": ["value1", "value2"]
         },
         {
-            "rule_name": "expect_column_values_to_be_in_range",
-            "description": "Validate column values are within specified range",
-            "applies_to": ["numeric"]
+            "rule_name": "ExpectColumnValuesToNotBeInSet",
+            "column_name": "test",
+            "value": ["invalid1", "invalid2"]
+        },
+        {
+            "rule_name": "ExpectColumnValuesToBeBetween",
+            "column_name": "age",
+            "value": {
+                "min_value": 0,
+                "max_value": 100
+            }
+        },
+        {
+            "rule_name": "ExpectColumnValueLengthsToBeBetween",
+            "column_name": "description",
+            "value": {
+                "min_value": 5,
+                "max_value": 500
+            }
+        },
+        {
+            "rule_name": "ExpectColumnValuesToMatchRegex",
+            "column_name": "phone",
+            "value": {
+                "regex": "^\\d{3}-\\d{3}-\\d{4}$"
+            }
+        },
+        {
+            "rule_name": "ExpectColumnValuesToNotMatchRegex",
+            "column_name": "ssn",
+            "value": {
+                "regex": "\\d{3}-\\d{2}-\\d{4}"
+            }
+        },
+        {
+            "rule_name": "ExpectColumnValuesToMatchStrftimeFormat", 
+            "column_name": "date",
+            "value": {
+                "strftime_format": "%Y-%m-%d"
+            }
+        },
+        {
+            "rule_name": "ExpectColumnValuesToBeUnique",
+            "column_name": "id",
+            "value": None
+        },
+        {
+            "rule_name": "ExpectCompoundColumnsToBeUnique",
+            "column_name": None,
+            "value": {
+                "column_list": ["first_name", "last_name", "dob"]
+            }
+        },
+        {
+            "rule_name": "ExpectColumnMeanToBeBetween",
+            "column_name": "salary",
+            "value": {
+                "min_value": 50000,
+                "max_value": 100000
+            }
+        },
+        {
+            "rule_name": "ExpectColumnMedianToBeBetween",
+            "column_name": "price",
+            "value": {
+                "min_value": 20,
+                "max_value": 50
+            }
+        },
+        {
+            "rule_name": "ExpectColumnSumToBeBetween",
+            "column_name": "inventory",
+            "value": {
+                "min_value": 1000,
+                "max_value": 2000
+            }
+        },
+        {
+            "rule_name": "ExpectColumnMinToBeBetween",
+            "column_name": "temperature",
+            "value": {
+                "min_value": -10,
+                "max_value": 0
+            }
+        },
+        {
+            "rule_name": "ExpectColumnMaxToBeBetween",
+            "column_name": "score",
+            "value": {
+                "min_value": 90,
+                "max_value": 100
+            }
+        },
+        {
+            "rule_name": "ExpectColumnProportionOfUniqueValuesToBeBetween",
+            "column_name": "user_id",
+            "value": {
+                "min_value": 0.95,
+                "max_value": 1.0
+            }
+        },
+        {
+            "rule_name": "ExpectColumnValuesToBeOfType",
+            "column_name": "count",
+            "value": {
+                "type_": "INTEGER"
+            }
+        },
+        {
+            "rule_name": "ExpectColumnValuesToBeInTypeList",
+            "column_name": "comment",
+            "value": {
+                "type_list": ["VARCHAR", "TEXT"]
+            }
+        },
+        {
+            "rule_name": "ExpectColumnValuesToBeDateutilParseable",
+            "column_name": "event_time",
+            "value": None
+        },
+        {
+            "rule_name": "ExpectColumnValuesToMatchLikePattern",
+            "column_name": "product_code",
+            "value": {
+                "like_pattern": "PROD_%"
+            }
+        },
+        {
+            "rule_name": "ExpectColumnValuesToNotMatchLikePattern",
+            "column_name": "internal_code",
+            "value": {
+                "like_pattern": "TEST_%"
+            }
+        },
+        {
+            "rule_name": "ExpectColumnValuesToBeBoolean",
+            "column_name": "is_active",
+            "value": None
+        },
+        {
+            "rule_name": "ExpectColumnValuesToBeNone",
+            "column_name": "optional_field",
+            "value": None
+        },
+        {
+            "rule_name": "ExpectColumnValuesToNotBeNone",
+            "column_name": "required_field",
+            "value": None
+        },
+        {
+            "rule_name": "ExpectColumnValueLengthsToEqual",
+            "column_name": "zip_code",
+            "value": {
+                "value": 5
+            }
+        },
+        {
+            "rule_name": "ExpectColumnValuesToBePositive",
+            "column_name": "quantity",
+            "value": None
+        },
+        {
+            "rule_name": "ExpectColumnValuesToBeLessThan",
+            "column_name": "age",
+            "value": {
+                "value": 120
+            }
+        },
+        {
+            "rule_name": "ExpectColumnValuesToBeGreaterThan",
+            "column_name": "salary",
+            "value": {
+                "value": 0
+            }
+        },
+        {
+            "rule_name": "ExpectColumnValuesToBeIncreasing",
+            "column_name": "timestamp",
+            "value": None
+        },
+        {
+            "rule_name": "ExpectColumnValuesToBeDecreasing",
+            "column_name": "depreciation",
+            "value": None
+        },
+        {
+            "rule_name": "ExpectColumnPairValuesAToBeGreaterThanB",
+            "column_name": None,
+            "value": {
+                "column_A": "revenue",
+                "column_B": "cost",
+                "or_equal": True
+            }
+        },
+        {
+            "rule_name": "ExpectColumnPairValuesToBeEqual",
+            "column_name": None,
+            "value": {
+                "column_A": "id",
+                "column_B": "reference_id"
+            }
+        },
+        {
+            "rule_name": "ExpectTableColumnsToMatchOrderedList",
+            "column_name": None,
+            "value": {
+                "column_list": ["id", "name", "date"]
+            }
+        },
+        {
+            "rule_name": "ExpectTableColumnCountToBeBetween",
+            "column_name": None,
+            "value": {
+                "min_value": 5,
+                "max_value": 10
+            }
+        },
+        {
+            "rule_name": "ExpectTableRowCountToEqual",
+            "column_name": None,
+            "value": {
+                "value": 10000
+            }
+        },
+        {
+            "rule_name": "ExpectTableRowCountToBeBetween",
+            "column_name": None,
+            "value": {
+                "min_value": 9000,
+                "max_value": 11000
+            }
+        },
+        {
+            "rule_name": "ExpectTableCustomQueryToReturnNoRows",
+            "column_name": None,
+            "value": {
+                "query": "SELECT * FROM table WHERE total < 0"
+            }
+        },
+        {
+            "rule_name": "ExpectColumnToExist",
+            "column_name": "required_column",
+            "value": None
+        },
+        {
+            "rule_name": "ExpectColumnValuesToBeValidEmail",
+            "column_name": "email",
+            "value": None
+        },
+        {
+            "rule_name": "ExpectColumnValuesToBeValidUrl",
+            "column_name": "website",
+            "value": None
+        },
+        {
+            "rule_name": "ExpectColumnValuesToBeValidIPv4",
+            "column_name": "ip_address",
+            "value": None
+        },
+        {
+            "rule_name": "ExpectColumnValuesToBeValidCreditCardNumber",
+            "column_name": "credit_card",
+            "value": None
+        },
+        {
+            "rule_name": "ExpectColumnValuesToBeAfter",
+            "column_name": "event_date",
+            "value": {
+                "min_date": "2023-01-01"
+            }
+        },
+        {
+            "rule_name": "ExpectColumnValuesToBeBefore",
+            "column_name": "expiry_date",
+            "value": {
+                "max_date": "2025-12-31"
+            }
+        },
+        {
+            "rule_name": "ExpectColumnValuesToBeBetweenDates",
+            "column_name": "order_date",
+            "value": {
+                "min_date": "2023-01-01",
+                "max_date": "2023-12-31"
+            }
         }
     ]
 
 @tool
 def suggest_column_rules(data_schema: dict, gx_rules: list) -> str:
-    """Use LLM to suggest GX rules per column with expertise and reasoning. Includes validation and safety checks."""
+    """Use LLM to suggest GX rules for all columns in a single call with optimized batching."""
     
     openai_key = require_openai_api_key()
-    # Optimized for reliable rule generation
     llm = ChatOpenAI(
-        model=settings.schema_llm_model,  # Use configured model
+        model=settings.schema_llm_model,
         openai_api_key=openai_key,
-        temperature=0.1,  # Slight variation for better rules
-        max_tokens=400,  # Enough tokens for complete rules
-        request_timeout=15,  # Reasonable timeout
-        max_retries=1,  # Single retry for stability
-        streaming=False,  # Disable streaming
-        model_kwargs={
-            'response_format': {'type': 'json'},  # Force JSON output
-            'seed': 42  # Consistent outputs
-        }
+        temperature=0.1,
+        max_tokens=4000,
+        request_timeout=45,  # Increased for larger batches
+        max_retries=3,  # More retries for reliability
+        streaming=False,
+        seed=42
     )
     
-    # Keep domain and analyze column types
+    # Extract domain and columns 
     domain = data_schema.get('domain', 'unknown')
     columns = [k for k in data_schema.keys() if k != 'domain']
     
-    # Group similar columns by data type for more efficient processing
-    column_groups = {}
+    if not columns:
+        logger.warning("No columns found in schema")
+        return "[]"
+    
+    # Group columns by inferred type for batched processing
+    type_groups = {}
+    
     for col in columns:
-        col_type = data_schema[col].get('type', 'unknown')
-        if col_type not in column_groups:
-            column_groups[col_type] = []
-        column_groups[col_type].append(col)
-    
-    # Efficient processing for all columns
-    num_columns = len(columns)
-    
-    # Use dynamic batch sizing based on column count
-    batch_size = min(max(10, num_columns // 3), 40)  # Scale between 10-40 columns per batch
-    
-    # Group columns by type for efficient parallel processing
-    type_grouped_columns = {}
-    type_rules = {}  # Pre-cache rules by type
-    
-    # Pre-process columns and rules
-    for col in columns:
-        col_type = data_schema[col].get('type', 'unknown')
-        if col_type not in type_grouped_columns:
-            type_grouped_columns[col_type] = []
-            # Pre-filter rules for this type
-            type_rules[col_type] = [r for r in gx_rules if 
-                                  col_type in r.get('applies_to', []) or 
-                                  'all' in r.get('applies_to', [])]
-        type_grouped_columns[col_type].append(col)
-    
-    # Optimize column processing order - similar types together
-    columns = []
-    for col_type in type_grouped_columns:
-        columns.extend(type_grouped_columns[col_type])
-    
-    # Simple cache key
-    user_id = f"agent_{domain}"
-    validation_config = None  # Disable validation for speed
-    
-    # Process columns by type to ensure unique rules
-    processed_results = []
-    type_processed = {}
-    
-    # Process columns by data type
-    for data_type, type_cols in type_grouped_columns.items():
-        if data_type not in type_processed:
-            type_processed[data_type] = True
-            
-            # Get rules specific to this data type
-            type_specific_rules = [r for r in gx_rules if 
-                                 data_type in r.get('applies_to', []) or 
-                                 'all' in r.get('applies_to', [])]
-            
-            for col in type_cols:
-                # Create focused schema for each column
-                column_schema = {
-                    'domain': domain,
-                    'columns': {
-                        col: {
-                            'type': data_schema[col].get('type', 'unknown'),
-                            'name': col,
-                            'description': data_schema[col].get('description', ''),
-                            'constraints': data_schema[col].get('constraints', {}),
-                            'format': data_schema[col].get('format', ''),
-                            'sample_values': data_schema[col].get('sample_values', []),
-                        }
-                    }
-                }
+        # Get type from schema or infer it
+        col_type = data_schema[col].get('type', 'unknown').lower()
+        if col_type == 'unknown':
+            col_name = col.upper()
+            if '_DATE' in col_name or 'DATE' in col_name:
+                col_type = 'date'
+            elif '_NUM' in col_name or 'NUMBER' in col_name or col_name.endswith('_ID'):
+                col_type = 'number'
+            elif '_FLAG' in col_name or col_name.endswith('_YN'):
+                col_type = 'boolean'
+            else:
+                col_type = 'string'
                 
-                # Generate type-specific prompt
-                prompt = get_enhanced_rule_prompt(domain, column_schema, type_specific_rules)
-                prompt += f"\nGenerate rules ONLY for column '{col}' with type '{data_type}'. Focus on type-specific validations and business rules."
-                
-                # Infer actual data type from name/type info
-                inferred_type = data_type
-                if inferred_type == 'unknown':
-                    col_name = col.upper()
-                    if '_DATE' in col_name or 'DATE' in col_name:
-                        inferred_type = 'date'
-                    elif '_NUM' in col_name or 'NUMBER' in col_name or col_name.endswith('_ID'):
-                        inferred_type = 'number'
-                    elif '_FLAG' in col_name or col_name.endswith('_YN'):
-                        inferred_type = 'boolean'
-                    else:
-                        inferred_type = 'string'
-
-                try:
-                    result = _process_llm_request(llm, prompt)
-                    if result and result != "[]":
-                        processed_results.append(result)
-                    else:
-                        # Generate type-specific fallback
-                        fallback = generate_type_specific_fallback(col, inferred_type)
-                        processed_results.append(json.dumps([fallback]))
-                except Exception as e:
-                    logger.error(f"Error processing column {col}: {e}")
-                    fallback = generate_type_specific_fallback(col, inferred_type)
-                    processed_results.append(json.dumps([fallback]))
+        if col_type not in type_groups:
+            type_groups[col_type] = []
+        type_groups[col_type].append(col)
     
-    # Return early if we have all results
-    if processed_results:
-        combined = "[\n" + ",\n".join(
-            result.strip('[]') for result in processed_results if result and result.strip('[]')
-        ) + "\n]"
-        return combined
+    # Process each type group in a single batch
+    results = []
     
-    # If no results, process in batches as fallback
-    import asyncio
-    from app.core.async_llm import process_batch_async
-    
-    # Process in sequential batches for reliability
-    all_results = []
-    batch_size = min(max(3, num_columns // 4), 8)  # Smaller batches
-    
-    # Get common rules that apply to all
-    common_rules = [r for r in gx_rules if 'all' in r.get('applies_to', ['all'])][:3]
-    
-    for i in range(0, num_columns, batch_size):
-        try:
-            batch_columns = columns[i:i + batch_size]
-            
-            # Get column types and infer types from names if needed
-            batch_types = {}
-            for col in batch_columns:
-                col_type = data_schema[col].get('type', 'unknown').lower()
-                
-                # Infer type from column name if not specified
-                if col_type == 'unknown':
-                    col_name = col.upper()
-                    if '_DATE' in col_name or 'DATE' in col_name:
-                        col_type = 'date'
-                    elif '_NUM' in col_name or 'NUMBER' in col_name or col_name.endswith('_ID'):
-                        col_type = 'number'
-                    elif '_FLAG' in col_name or col_name.endswith('_YN'):
-                        col_type = 'boolean'
-                    else:
-                        col_type = 'string'
-                
-                batch_types[col] = col_type
-            
-            # Collect relevant rules for each type
-            batch_rules = common_rules.copy()
-            for col_type in set(batch_types.values()):
-                type_specific = [r for r in gx_rules 
-                               if col_type in r.get('applies_to', []) or
-                               (col_type == 'number' and 'numeric' in r.get('applies_to', []))]
-                batch_rules.extend(type_specific)
-            
-            # Create focused schema with more context
-            batch_schema = {
-                'domain': domain,
-                'columns': {
-                    k: {
-                        'type': data_schema[k].get('type', 'unknown'),
-                        'name': k,
-                        'description': data_schema[k].get('description', ''),
-                        'format': data_schema[k].get('format', ''),
-                        'constraints': data_schema[k].get('constraints', {})
-                    } for k in batch_columns
-                }
+    for data_type, group_columns in type_groups.items():
+        # Get rules applicable to this type
+        type_rules = [r for r in gx_rules if 
+                     data_type in r.get('applies_to', []) or 
+                     'all' in r.get('applies_to', [])]
+        
+        # Prepare focused schema for this group
+        group_schema = {
+            'domain': domain,
+            'columns': {}
+        }
+        
+        for col in group_columns:
+            group_schema['columns'][col] = {
+                'type': data_type,
+                'name': col,
+                'description': data_schema[col].get('description', ''),
+                'constraints': data_schema[col].get('constraints', {}),
+                'format': data_schema[col].get('format', ''),
+                'sample_values': data_schema[col].get('sample_values', [])
             }
-            
-            # Generate type-specific rules for this batch
-            type_specific_rules = []
-            for col in batch_columns:
-                col_type = data_schema[col].get('type', 'unknown')
-                # Get rules specific to this column type
-                col_rules = [r for r in gx_rules if 
-                           col_type in r.get('applies_to', []) or 
-                           'all' in r.get('applies_to', [])]
-                type_specific_rules.extend(col_rules)
-            
-            # Add type-specific rules to batch rules
-            batch_rules.extend([r for r in type_specific_rules if r not in batch_rules])
-            
-            # Enhanced prompt with type-specific context
-            # Generate column type descriptions
-            column_type_info = []
-            for k in batch_columns:
-                col_type = data_schema[k].get("type", "unknown")
-                column_type_info.append(f"{k}({col_type})")
-            
-            prompt = get_enhanced_rule_prompt(domain, batch_schema, batch_rules)
-            prompt += f"\nNote: Generate specific rules for each column based on its type. For {', '.join(batch_columns)}, consider their types: {', '.join(column_type_info)}."
-            
+        
+        # Generate prompt for all columns of this type
+        column_info = [f"{col}({data_type})" for col in group_columns]
+        prompt = get_enhanced_rule_prompt(domain, group_schema, type_rules)
+        
+        # Add explicit JSON formatting instructions
+        prompt += f"""
+Generate rules for these {data_type} columns: {', '.join(column_info)}
+
+CRITICAL: Respond ONLY with a JSON array. No markdown, no extra text.
+
+Required structure:
+[
+  {{
+    "column": "column_name",
+    "expectations": [
+      {{
+        "expectation_type": "rule_name",
+        "kwargs": {{
+          "key": "value"
+        }}
+      }}
+    ]
+  }}
+]
+
+Rules should be relevant for {data_type} data type. Include validation for:
+- Data type consistency 
+- Value ranges if applicable
+- Format validation
+- Business logic constraints
+- NULL handling
+"""
+
+        try:
+            # Make single LLM call for all columns of this type
             result = _process_llm_request(llm, prompt)
             
-            # Ensure we have valid rules with type-specific defaults
-            if not result or result == "[]":
-                # Generate type-specific default rules
-                fallback = []
-                for col in batch_columns:
-                    col_type = data_schema[col].get('type', 'unknown')
-                    rules = [{"expectation_type": "expect_column_values_to_not_be_null"}]
-                    
-                    if col_type in ['number', 'integer', 'float']:
-                        rules.extend([
-                            {"expectation_type": "expect_column_values_to_be_in_type_list",
-                             "kwargs": {"type_list": ["number"]}},
-                            {"expectation_type": "expect_column_values_to_be_in_range",
-                             "kwargs": {"min_value": None, "max_value": None}}
-                        ])
-                    elif col_type in ['string', 'text']:
-                        rules.extend([
-                            {"expectation_type": "expect_column_values_to_be_in_type_list",
-                             "kwargs": {"type_list": ["string"]}},
-                            {"expectation_type": "expect_column_values_to_match_regex",
-                             "kwargs": {"regex": ".*"}}
-                        ])
-                    elif col_type in ['date', 'datetime']:
-                        rules.extend([
-                            {"expectation_type": "expect_column_values_to_be_dateutil_parseable"},
-                            {"expectation_type": "expect_column_values_to_be_in_type_list",
-                             "kwargs": {"type_list": ["datetime", "string"]}}
-                        ])
-                    elif col_type in ['boolean']:
-                        rules.extend([
-                            {"expectation_type": "expect_column_values_to_be_in_type_list",
-                             "kwargs": {"type_list": ["boolean"]}},
-                            {"expectation_type": "expect_column_values_to_be_in_set",
-                             "kwargs": {"value_set": [True, False]}}
-                        ])
-                    
-                    fallback.append({
-                        "column": col,
-                        "expectations": rules
-                    })
-                result = json.dumps(fallback)
-            
-            all_results.append(result)
-            
+            if result and result != "[]":
+                results.append(result)
+            else:
+                # Generate type-specific fallbacks
+                fallbacks = []
+                for col in group_columns:
+                    fallbacks.append(generate_type_specific_fallback(col, data_type))
+                results.append(json.dumps(fallbacks))
+                
         except Exception as e:
-            logger.error(f"Error processing batch {i//batch_size + 1}: {e}")
-            # Add fallback rules for this batch
-            fallback = []
-            for col in batch_columns:
-                fallback.append({
-                    "column": col,
-                    "expectations": [
-                        {"expectation_type": "expect_column_values_to_not_be_null"}
-                    ]
-                })
-            all_results.append(json.dumps(fallback))
-    
+            logger.error(f"Error processing {data_type} columns: {e}")
+            # Add fallback rules
+            fallbacks = []
+            for col in group_columns:
+                fallbacks.append(generate_type_specific_fallback(col, data_type))
+            results.append(json.dumps(fallbacks))
+
     # Combine all results
-    if not all_results:
-        # Fallback for all columns if nothing was processed
-        fallback = []
+    if not results:
+        # Global fallback
+        fallbacks = []
         for col in columns:
-            fallback.append({
+            fallbacks.append({
                 "column": col,
                 "expectations": [
                     {"expectation_type": "expect_column_values_to_not_be_null"}
                 ]
             })
-        return json.dumps(fallback)
+        return json.dumps(fallbacks)
     
-    # Fast result combination
-    if not all_results:
-        return "[]"
-        
-    # Quick combine without extra processing
+    # Combine valid results
     combined = "[\n" + ",\n".join(
-        r.strip('[]') for r in all_results if r and r.strip('[]')
+        result.strip('[]') for result in results if result and result.strip('[]')
     ) + "\n]"
     
     return combined
@@ -433,12 +568,48 @@ def _process_llm_request(llm, prompt: str) -> str:
         response = llm.invoke([{"role": "user", "content": prompt}])
         result = response.content.strip()
         
+        # Log raw response for debugging
+        logger.debug(f"Raw LLM response: {result}")
+        
+        # Extract JSON if wrapped in markdown code blocks
+        if result.startswith("```json"):
+            result = result[7:]  # Remove ```json
+        if result.startswith("```"):
+            result = result[3:]  # Remove ```
+        if result.endswith("```"):
+            result = result[:-3]  # Remove trailing ```
+        
+        # Clean up any remaining markdown or text
+        result = result.strip()
+        
         # Validate JSON format
         try:
-            json.loads(result)
-            return result
-        except json.JSONDecodeError:
-            logger.warning("Invalid JSON response from LLM")
+            # Try to parse as JSON object first
+            parsed = json.loads(result)
+            
+            # Ensure we have an array of objects
+            if isinstance(parsed, dict):
+                # If we got a single object, wrap it in an array
+                if "column" in parsed and "expectations" in parsed:
+                    parsed = [parsed]
+                # If we got a JSON object with a rules array
+                elif "rules" in parsed and isinstance(parsed["rules"], list):
+                    parsed = parsed["rules"]
+            
+            # Validate structure
+            if isinstance(parsed, list):
+                # Ensure each item has required fields
+                for item in parsed:
+                    if not isinstance(item, dict) or "column" not in item or "expectations" not in item:
+                        logger.warning("Invalid rule structure in response")
+                        return "[]"
+                return json.dumps(parsed, indent=2)
+            else:
+                logger.warning("Response is not a list of rules")
+                return "[]"
+                
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid JSON response from LLM: {str(e)}")
             return "[]"
             
     except Exception as e:
@@ -451,7 +622,15 @@ def suggest_column_names_only(domain: str) -> list:
     """Use LLM to suggest CSV column names with business intelligence expertise. Includes validation and safety checks."""
     
     openai_key = require_openai_api_key()
-    llm = ChatOpenAI(model=settings.schema_llm_model, openai_api_key=openai_key, temperature=settings.llm_temperature)
+    llm = ChatOpenAI(
+        model=settings.schema_llm_model,
+        openai_api_key=openai_key,
+        temperature=settings.llm_temperature,
+        seed=42,  # Consistent outputs
+        model_kwargs={
+            'response_format': {'type': 'json_object'}  # Force JSON output
+        }
+    )
 
     # Use enhanced prompt from configuration system  
     prompt = get_enhanced_column_prompt(domain)

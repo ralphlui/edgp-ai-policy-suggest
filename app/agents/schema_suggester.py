@@ -121,7 +121,8 @@ def get_model_chain(use_structured_output: bool = True) -> Runnable:
                 temperature=settings.llm_temperature,
                 openai_api_key=openai_key,
                 timeout=get_schema_generation_config().timeout_seconds,
-                max_retries=2
+                max_retries=2,
+                seed=42  # Consistent outputs
             )
             
             # Choose parser based on configuration
@@ -494,7 +495,7 @@ class SchemaSuggesterEnhanced:
         except Exception:
             # Fall back to settings if AWS Secrets Manager fails
             self.client = AsyncOpenAI(api_key=settings.openai_api_key)
-        self.model = "gpt-4o-mini"
+        self.model = settings.schema_llm_model  # Use configured model name
     
     async def bootstrap_schema_with_preferences(
         self, 
