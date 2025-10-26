@@ -5,6 +5,7 @@ Stores and retrieves historical policy data with vector search capabilities
 
 from datetime import datetime
 from typing import Dict, List, Any, Optional
+import json
 from opensearchpy import OpenSearch
 from app.core.config import settings
 from app.aoss.aoss_client import create_aoss_client
@@ -22,8 +23,9 @@ class PolicyHistoryDoc:
         rules: List[Dict[str, Any]],
         performance_metrics: Dict[str, Any],
         created_at: datetime,
-        updated_at: datetime,
         embedding: List[float],
+        confidence_scores: Dict[str, float] = None,
+        updated_at: datetime = None,
         metadata: Dict[str, Any] = None
     ):
         self.policy_id = policy_id
@@ -32,8 +34,9 @@ class PolicyHistoryDoc:
         self.rules = rules
         self.performance_metrics = performance_metrics
         self.created_at = created_at
-        self.updated_at = updated_at
+        self.updated_at = updated_at or created_at
         self.embedding = embedding
+        self.confidence_scores = confidence_scores or {}
         self.metadata = metadata or {}
 
     def to_doc(self) -> Dict[str, Any]:
@@ -46,6 +49,7 @@ class PolicyHistoryDoc:
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "embedding": self.embedding,
+            "confidence_scores": self.confidence_scores,
             "metadata": self.metadata
         }
 
@@ -69,7 +73,9 @@ class PolicyHistoryStore:
                             "policy_id": {"type": "keyword"},
                             "domain": {"type": "keyword"},
                             "schema": {"type": "object"},
-                            "rules": {"type": "object"},
+                            "rules": {
+                                "type": "keyword",  # Store rules as JSON string
+                            },
                             "performance_metrics": {
                                 "properties": {
                                     "success_rate": {"type": "float"},
@@ -89,12 +95,13 @@ class PolicyHistoryStore:
                                     "parameters": {"m": 16, "ef_construction": 128}
                                 }
                             },
-                            "metadata": {
+                            "confidence_scores": {
                                 "properties": {
-                                    "author": {"type": "keyword"},
-                                    "version": {"type": "keyword"},
-                                    "tags": {"type": "keyword"},
-                                    "status": {"type": "keyword"}
+                                    "overall": {"type": "float"},
+                                    "rule_generation": {"type": "float"},
+                                    "validation": {"type": "float"},
+                                    "formatting": {"type": "float"},
+                                    "normalization": {"type": "float"}
                                 }
                             }
                         }
@@ -110,6 +117,11 @@ class PolicyHistoryStore:
         """Store a policy document"""
         try:
             doc = policy.to_doc()
+            
+            # Serialize rules to JSON string
+            if "rules" in doc:
+                doc["rules"] = json.dumps(doc["rules"])
+            
             # Store without refresh parameter for AOSS compatibility
             response = self.client.index(
                 index=self.index_name,
@@ -132,10 +144,13 @@ class PolicyHistoryStore:
         self,
         query_embedding: List[float],
         domain: Optional[str] = None,
-        min_success_rate: float = 0.7,
-        top_k: int = 5
+        min_success_rate: float = None,
+        top_k: int = None
     ) -> List[Dict[str, Any]]:
         """Retrieve similar policies using vector search"""
+        # Use values from settings with fallbacks
+        min_success_rate = min_success_rate if min_success_rate is not None else settings.policy_min_success_rate
+        top_k = top_k if top_k is not None else settings.policy_top_k
         try:
             query = {
                 "size": top_k,
@@ -164,10 +179,17 @@ class PolicyHistoryStore:
                 body=query
             )
 
-            return [{
-                "score": hit["_score"],
-                **hit["_source"]
-            } for hit in response["hits"]["hits"]]
+            results = []
+            for hit in response["hits"]["hits"]:
+                source = hit["_source"]
+                # Deserialize rules from JSON string
+                if "rules" in source and isinstance(source["rules"], str):
+                    source["rules"] = json.loads(source["rules"])
+                results.append({
+                    "score": hit["_score"],
+                    **source
+                })
+            return results
 
         except Exception as e:
             logger.error(f"Failed to retrieve similar policies: {e}")
@@ -195,7 +217,14 @@ class PolicyHistoryStore:
                 body=query
             )
 
-            return [hit["_source"] for hit in response["hits"]["hits"]]
+            results = []
+            for hit in response["hits"]["hits"]:
+                source = hit["_source"]
+                # Deserialize rules from JSON string
+                if "rules" in source and isinstance(source["rules"], str):
+                    source["rules"] = json.loads(source["rules"])
+                results.append(source)
+            return results
         except Exception as e:
             logger.error(f"Failed to get domain policies: {e}")
             return []

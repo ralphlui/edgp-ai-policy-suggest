@@ -2,12 +2,11 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 import os
 from app.api.domain_schema_routes import router as domain_schema_router
 from app.api.rule_suggestion_routes import router as rule_suggestion_router
 from app.api.aoss_routes import router as vector_router
-from app.api.agent_insights_routes import router as agent_insights_router
 from app.exception.exceptions import (
     authentication_exception_handler,
     general_exception_handler,
@@ -17,14 +16,6 @@ from app.exception.exceptions import (
 from app.aws.audit_middleware import add_audit_middleware
 from app.aws.audit_service import audit_system_health
 import time, logging
-
-# Import validation router
-try:
-    from app.api.validator_routes import validation_router
-    VALIDATION_AVAILABLE = True
-except ImportError as e:
-    logging.warning(f"Validation router not available: {e}")
-    VALIDATION_AVAILABLE = False
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -36,9 +27,29 @@ app = FastAPI(
 )
 
 # Add exception handlers for standardized responses
-app.add_exception_handler(HTTPException, authentication_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(Exception, internal_server_error_handler)
+
+# Specific HTTP exception handlers
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    """Handle HTTP exceptions based on status code"""
+    logger.error(f"HTTP exception: {exc.status_code} - {exc.detail}")
+    
+    # Use authentication handler for 401 and 403
+    if exc.status_code in {401, 403}:
+        return await authentication_exception_handler(request, exc)
+    
+    # Use general handler for all other status codes
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": exc.detail,
+            "detail": exc.detail,
+            "success": False,
+            "status": exc.status_code
+        }
+    )
 
 app.add_middleware(
     CORSMiddleware,
@@ -53,7 +64,7 @@ add_audit_middleware(
     app, 
     excluded_paths=[
         "/health", "/metrics", "/docs", "/openapi.json", "/favicon.ico", 
-        "/api/aips/health", "/api/aips/info", "/static", "/dashboard"
+        "/api/aips/health", "/api/aips/info"
     ],  # Only exclude system monitoring endpoints
     log_request_body=True,  # Capture request bodies for complete transaction tracking
     log_response_body=False,  # Keep response logging disabled for performance
@@ -67,6 +78,13 @@ async def log_requests(request: Request, call_next):
     response = await call_next(request)
     logger.info(f"{request.method} {request.url} - {response.status_code} - {time.time() - start:.2f}s")
     return response
+
+# Check if validation system is available
+try:
+    from app.validation.llm_validator import LLMResponseValidator
+    VALIDATION_AVAILABLE = True
+except ImportError:
+    VALIDATION_AVAILABLE = False
 
 @app.get("/api/aips/health")
 def health():
@@ -92,6 +110,7 @@ def health():
         if store is None:
             health_status["services"]["opensearch"] = "unavailable"
             health_status["opensearch_message"] = "Store initialization failed - likely AWS permission issues"
+            health_status["status"] = "ok"  # Still return 200 even if OpenSearch is unavailable
         else:
             # Try a simple operation
             try:
@@ -100,9 +119,11 @@ def health():
             except Exception as e:
                 health_status["services"]["opensearch"] = "error"
                 health_status["opensearch_error"] = str(e)[:100]  # Truncate error
+                health_status["status"] = "ok"  # Still return 200 even if OpenSearch has error
     except Exception as e:
         health_status["services"]["opensearch"] = "error"
         health_status["opensearch_error"] = str(e)[:100]
+        health_status["status"] = "ok"  # Still return 200 even if OpenSearch has error
     
     # Test validation system
     if VALIDATION_AVAILABLE:
@@ -279,28 +300,8 @@ def service_info():
 app.include_router(domain_schema_router)
 app.include_router(rule_suggestion_router)
 app.include_router(vector_router)
-app.include_router(agent_insights_router)
 
-# Mount static files for the dashboard
-static_path = os.path.join(os.path.dirname(__file__), "static")
-if os.path.exists(static_path):
-    app.mount("/static", StaticFiles(directory=static_path), name="static")
 
-@app.get("/dashboard")
-async def agent_dashboard():
-    """Serve the enhanced agent insights dashboard"""
-    dashboard_path = os.path.join(static_path, "agent_dashboard.html")
-    if os.path.exists(dashboard_path):
-        return FileResponse(dashboard_path)
-    else:
-        raise HTTPException(status_code=404, detail="Dashboard not found")
-
-# Include validation router if available
-if VALIDATION_AVAILABLE:
-    app.include_router(validation_router, prefix="/api/aips")
-    logging.info("Validation router successfully included with prefix /api/aips")
-else:
-    logging.warning("Validation router not included - validation module unavailable")
 
 if __name__ == "__main__":
     import uvicorn

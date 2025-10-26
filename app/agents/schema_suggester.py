@@ -87,7 +87,7 @@ class ColumnSchema(BaseModel):
 
 class SchemaResponse(BaseModel):
     """Pydantic model for LLM schema response"""
-    columns: List[ColumnSchema] = Field(..., min_length=5, max_length=11)
+    columns: List[ColumnSchema] = Field(..., min_length=1, max_length=50)
 
 
 # =============================================================================
@@ -103,9 +103,6 @@ def get_schema_generation_config() -> SchemaGenerationConfig:
     return SchemaGenerationConfig()
 
 
-# =============================================================================
-# BASIC SCHEMA GENERATION (ORIGINAL FUNCTIONALITY)
-# =============================================================================
 
 def get_model_chain(use_structured_output: bool = True) -> Runnable:
     """Get or create model chain with caching and error handling"""

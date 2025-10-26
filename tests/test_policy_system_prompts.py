@@ -36,6 +36,7 @@ class TestPromptConstants:
         assert "{schema}" in prompt
         assert "{rules}" in prompt
         assert "{domain}" in prompt
+        assert "{historical_context}" in prompt
         
         # Check for expected validation patterns
         assert "expect_column_values_to_match_regex" in prompt
@@ -405,7 +406,8 @@ class TestPromptIntegration:
         substituted = rule_prompt.format(
             schema="customer_table",
             rules="expect_column_values_to_not_be_null",
-            domain="customer"
+            domain="customer",
+            historical_context="No similar historical policies found."
         )
         
         assert "customer_table" in substituted

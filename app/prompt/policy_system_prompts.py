@@ -13,10 +13,18 @@ ENHANCED_RULE_GENERATION_PROMPT = """You are an expert data governance and quali
 - Regulatory compliance (GDPR, HIPAA, SOX)
 - Performance-optimized validation strategies
 
-**CONTEXT:**
+**HISTORICAL CONTEXT:**
+{historical_context}
+
+**CURRENT CONTEXT:**
 Schema: {schema}
 Available Great Expectations Rules: {rules}
 Domain: {domain}
+
+**HISTORICAL VALIDATION PATTERNS:**
+{historical_context}
+
+The above patterns have proven successful in similar contexts, with documented success rates.
 
 **YOUR TASK:**
 Analyze each column and recommend optimal validation rules that ensure:

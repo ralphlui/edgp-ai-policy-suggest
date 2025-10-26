@@ -24,12 +24,14 @@ def sample_policy_doc():
         },
         rules=[
             {
-                "type": "email_validation",
-                "parameters": {"field": "email"}
+                "rule_name": "ExpectColumnValuesToBeValidEmail",
+                "column_name": "email",
+                "value": None
             },
             {
-                "type": "range_check",
-                "parameters": {"field": "age", "min": 0, "max": 120}
+                "rule_name": "ExpectColumnValuesToBeBetween",
+                "column_name": "age",
+                "value": {"min_value": 0, "max_value": 120}
             }
         ],
         performance_metrics={
@@ -92,7 +94,7 @@ async def test_store_policy(mock_aoss_client, sample_policy_doc):
         # Verify document content
         doc = index_args['body']
         assert doc['domain'] == sample_policy_doc.domain
-        assert doc['rules'] == sample_policy_doc.rules
+        assert doc['rules'] == json.dumps(sample_policy_doc.rules)  # Rules should be JSON serialized
         assert doc['embedding'] == sample_policy_doc.embedding
         
         # Verify returned ID
@@ -110,7 +112,7 @@ async def test_retrieve_similar_policies(mock_aoss_client):
                     "_source": {
                         "policy_id": "test-1",
                         "domain": "customer",
-                        "rules": [{"type": "email_validation"}],
+                        "rules": [{"rule_name": "ExpectColumnValuesToBeValidEmail", "column_name": "email", "value": None}],
                         "performance_metrics": {"success_rate": 0.9}
                     }
                 },
@@ -119,7 +121,7 @@ async def test_retrieve_similar_policies(mock_aoss_client):
                     "_source": {
                         "policy_id": "test-2",
                         "domain": "customer",
-                        "rules": [{"type": "range_check"}],
+                        "rules": [{"rule_name": "ExpectColumnValuesToBeBetween", "column_name": "age", "value": {"min_value": 0, "max_value": 120}}],
                         "performance_metrics": {"success_rate": 0.85}
                     }
                 }
@@ -165,7 +167,7 @@ async def test_get_domain_policies(mock_aoss_client):
                         "policy_id": "test-1",
                         "domain": "customer",
                         "created_at": "2025-10-23T00:00:00",
-                        "rules": [{"type": "email_validation"}]
+                        "rules": [{"rule_name": "ExpectColumnValuesToBeValidEmail", "column_name": "email", "value": None}]
                     }
                 }
             ]

@@ -30,8 +30,13 @@ class TestRuleToolsModule:
         assert callable(convert_to_rule_ms_format)
 
     @patch('app.tools.rule_tools.requests.get')
-    def test_fetch_gx_rules_success(self, mock_get):
+    @patch('app.tools.rule_tools.settings')
+    def test_fetch_gx_rules_success(self, mock_settings, mock_get):
         """Test successful rule fetching"""
+        # Mock settings to return a valid URL
+        mock_settings.rule_api_url = "http://test-rules.example.com"
+        
+        # Mock response from the rules service
         mock_response = Mock()
         mock_response.json.return_value = [{"rule": "test"}]
         mock_response.raise_for_status.return_value = None
@@ -43,7 +48,7 @@ class TestRuleToolsModule:
         result = fetch_gx_rules.func("")
         
         assert isinstance(result, list)
-        mock_get.assert_called_once()
+        mock_get.assert_called_once_with("http://test-rules.example.com", timeout=3)
 
     @patch('app.tools.rule_tools.requests.get')
     def test_fetch_gx_rules_connection_error(self, mock_get):
@@ -223,15 +228,16 @@ class TestRuleToolsModule:
         # Verify numeric rules
         numeric_rules = [r for r in result if r["column_name"] == "numeric_col"]
         assert any(r["rule_name"] == "ExpectColumnValuesToBeInTypeList" and 
-                  r["value"]["type_list"] == ["number"] for r in numeric_rules)
+                  r["value"] == ["number"] for r in numeric_rules)
         assert any(r["rule_name"] == "ExpectColumnValuesToBeInRange" and 
+                  "min_value" in r["value"] and "max_value" in r["value"] and
                   r["value"]["min_value"] == 0 and r["value"]["max_value"] == 100 
                   for r in numeric_rules)
         
         # Verify string rules
         string_rules = [r for r in result if r["column_name"] == "string_col"]
         assert any(r["rule_name"] == "ExpectColumnValuesToMatchRegex" and 
-                  r["value"]["regex"] == "^[\\w\\.-]+$" for r in string_rules)
+                  r["value"] == "^[\\w\\.-]+$" for r in string_rules)
         
         # Verify date rules
         date_rules = [r for r in result if r["column_name"] == "date_col"]
@@ -241,7 +247,7 @@ class TestRuleToolsModule:
         # Verify boolean rules
         bool_rules = [r for r in result if r["column_name"] == "bool_col"]
         assert any(r["rule_name"] == "ExpectColumnValuesToBeInSet" and 
-                  r["value"]["value_set"] == [True, False] for r in bool_rules)
+                  r["value"] == [True, False] for r in bool_rules)
         
     def test_convert_to_rule_ms_format_with_inferred_types(self):
         """Test rule conversion with type inference"""
@@ -289,7 +295,7 @@ class TestRuleToolsModule:
         # Verify set-based rules
         yn_rules = [r for r in result if r["column_name"] == "ACTIVE_YN"]
         assert any(r["rule_name"] == "ExpectColumnValuesToBeInSet" and 
-                  r["value"]["value_set"] == ["Y", "N"] for r in yn_rules)
+                  r["value"] == ["Y", "N"] for r in yn_rules)
 
     @patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}, clear=False)
     @patch('app.aws.aws_secrets_service.require_openai_api_key', return_value='test-key')
@@ -514,7 +520,7 @@ class TestRuleToolsModule:
         # Should have number type validation
         assert any(
             exp["expectation_type"] == "expect_column_values_to_be_in_type_list" and
-            "number" in exp.get("kwargs", {}).get("type_list", [])
+            exp.get("kwargs", {}).get("type_list", []) == ["number"]
             for exp in num_expectations
         ), f"Missing number type validation for CUSTOMER_NUMBER. Rules: {num_expectations}"
             
@@ -525,7 +531,7 @@ class TestRuleToolsModule:
         # Should have either boolean type or value set rule
         has_flag_validation = any(
             (exp["expectation_type"] == "expect_column_values_to_be_in_type_list" and
-             any(t in exp.get("kwargs", {}).get("type_list", []) for t in ["boolean", "string"])) or
+             exp.get("kwargs", {}).get("type_list", []) in [["boolean"], ["string"]]) or
             ("expect_column_values_to_be_in_set" in exp["expectation_type"])
             for exp in flag_expectations
         )
@@ -621,7 +627,8 @@ class TestRuleToolsUtilities:
             "suggestions": {
                 "test_col": {
                     "expectations": [
-                        {"expectation_type": "expect_column_values_to_be_between", "kwargs": {"min": 0, "max": 100}}
+                        {"expectation_type": "expect_column_values_to_be_between", 
+                         "kwargs": {"min_value": 0, "max_value": 100}}
                     ]
                 }
             }
@@ -630,8 +637,10 @@ class TestRuleToolsUtilities:
         
         assert len(result) > 0
         assert result[0]["rule_name"] == "ExpectColumnValuesToBeBetween"
-        assert result[0]["value"]["min"] == 0
-        assert result[0]["value"]["max"] == 100
+        assert "min_value" in result[0]["value"]
+        assert "max_value" in result[0]["value"]
+        assert result[0]["value"]["min_value"] == 0
+        assert result[0]["value"]["max_value"] == 100
 
     def test_default_gx_rules_structure(self):
         """Test default GX rules returned on connection error"""

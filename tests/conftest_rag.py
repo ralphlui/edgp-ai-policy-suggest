@@ -16,7 +16,7 @@ def setup_test_env():
         'EMBED_MODEL': 'text-embedding-3-small',
         'EMBED_DIM': '1536',
         'AOSS_HOST': 'mock-aoss-host.test.local',
-        'AWS_REGION': 'us-east-1'
+        'AWS_REGION': 'ap-southeast-1'
     }):
         yield
 
