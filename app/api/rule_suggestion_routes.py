@@ -58,6 +58,7 @@ def log_duration(step_name: str):
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/aips/rules", tags=["rule-suggestions"])
+alias_router = APIRouter(tags=["rule-suggestions-legacy"])  # Back-compat routes
 
 
 def _calculate_overall_confidence(state) -> float:
@@ -355,3 +356,13 @@ async def suggest_rules(
             },
             "domain": domain
         }, status_code=500)
+
+
+@alias_router.post("/api/aips/suggest-rules")
+async def suggest_rules_legacy(
+    domain: str = Body(..., embed=True),
+    user: UserInfo = Depends(verify_any_scope_token),
+    include_insights: bool = Body(True, embed=True)
+):
+    """Backwards-compatible endpoint that mirrors /api/aips/rules/suggest"""
+    return await suggest_rules(domain=domain, user=user, include_insights=include_insights)

@@ -16,22 +16,36 @@ def mock_aoss_client():
 @pytest.fixture
 def sample_policy_doc():
     return PolicyHistoryDoc(
+        history_id="hist_test_policy-1",
+        org_id="test_org",
         policy_id="test-policy-1",
         domain="customer",
         schema={
-            "email": {"dtype": "string", "sample_values": ["test@example.com"]},
-            "age": {"dtype": "integer", "sample_values": ["25", "30"]}
+            "columns": [
+                {"name": "email", "dtype": "string", "pii": True},
+                {"name": "age", "dtype": "integer", "pii": False}
+            ]
         },
         rules=[
             {
-                "rule_name": "ExpectColumnValuesToBeValidEmail",
+                "rule_id": "valid_email",
+                "gx_expectation": "expect_column_values_to_match_regex",
                 "column_name": "email",
-                "value": None
+                "params": {"regex": ".+@.+\\..+"},
+                "category": "format",
+                "dtypes": ["string"],
+                "source": "catalog",
+                "why": "Emails must be valid"
             },
             {
-                "rule_name": "ExpectColumnValuesToBeBetween",
+                "rule_id": "age_range",
+                "gx_expectation": "expect_column_values_to_be_between",
                 "column_name": "age",
-                "value": {"min_value": 0, "max_value": 120}
+                "params": {"min_value": 0, "max_value": 120},
+                "category": "range",
+                "dtypes": ["integer"],
+                "source": "history",
+                "why": "Valid human age range"
             }
         ],
         performance_metrics={
@@ -39,12 +53,15 @@ def sample_policy_doc():
             "validation_score": 0.92,
             "usage_count": 10
         },
+        success_score=0.95,
+        last_used=datetime.now(),
         created_at=datetime.now(),
         updated_at=datetime.now(),
+        embedding_text="domain:customer rules:format range columns:email age dtype:string integer success:0.95",
         embedding=[0.1] * 1536,
         metadata={
             "author": "test_user",
-            "version": "1.0"
+            "version": 1
         }
     )
 
@@ -62,14 +79,18 @@ async def test_policy_history_store_initialization(mock_aoss_client):
         assert 'settings' in create_body
         assert 'mappings' in create_body
         assert create_body['settings']['index']['knn'] is True
-        
+
         # Verify field mappings
         properties = create_body['mappings']['properties']
+        assert 'history_id' in properties
+        assert 'org_id' in properties
         assert 'policy_id' in properties
         assert 'domain' in properties
         assert 'embedding' in properties
         assert properties['embedding']['type'] == 'knn_vector'
         assert properties['embedding']['dimension'] == 1536
+        assert properties['rules']['type'] == 'nested'
+        assert 'embedding_text' in properties
 
 @pytest.mark.asyncio
 async def test_store_policy(mock_aoss_client, sample_policy_doc):
@@ -94,9 +115,10 @@ async def test_store_policy(mock_aoss_client, sample_policy_doc):
         # Verify document content
         doc = index_args['body']
         assert doc['domain'] == sample_policy_doc.domain
-        assert doc['rules'] == json.dumps(sample_policy_doc.rules)  # Rules should be JSON serialized
+        assert isinstance(doc['rules'], list)  # Rules should be stored as structured array
         assert doc['embedding'] == sample_policy_doc.embedding
-        
+        assert 'created_at' in doc and doc['created_at'].endswith('Z')
+
         # Verify returned ID
         assert generated_id == 'generated-id-123'
 

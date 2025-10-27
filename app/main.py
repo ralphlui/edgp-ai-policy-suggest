@@ -6,7 +6,10 @@ from fastapi.responses import FileResponse, JSONResponse
 import os
 from app.api.domain_schema_routes import router as domain_schema_router
 from app.api.rule_suggestion_routes import router as rule_suggestion_router
+from app.api.rule_suggestion_routes import alias_router as rule_suggestion_legacy_router
 from app.api.aoss_routes import router as vector_router
+from app.api.rules_refresh_routes import router as rules_refresh_router
+from app.api.policy_history_admin_routes import router as policy_history_admin_router
 from app.exception.exceptions import (
     authentication_exception_handler,
     general_exception_handler,
@@ -15,7 +18,7 @@ from app.exception.exceptions import (
 )
 from app.aws.audit_middleware import add_audit_middleware
 from app.aws.audit_service import audit_system_health
-import time, logging
+import time, logging, asyncio
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -191,6 +194,11 @@ def service_info():
                 "path": "/api/aips/rules/suggest",
                 "description": "Suggest validation rules for a domain with agent insights by default"
             },
+            "refresh_rules": {
+                "method": "POST",
+                "path": "/api/aips/rules/refresh",
+                "description": "Trigger an immediate refresh of GX rules cache"
+            },
             "create_domain": {
                 "method": "POST",
                 "path": "/api/aips/domains/create",
@@ -225,6 +233,12 @@ def service_info():
                 "method": "GET",
                 "path": "/api/aips/domains/{domain_name}",
                 "description": "Get details for a specific domain"
+            },
+            
+            "policy_history_retrieve": {
+                "method": "POST",
+                "path": "/api/aips/policy-history/retrieve",
+                "description": "Retrieve historical policies using hybrid search (BM25 + kNN)"
             }
         },
         "repository": "edgp-ai-policy-suggest",
@@ -299,9 +313,20 @@ def service_info():
 
 app.include_router(domain_schema_router)
 app.include_router(rule_suggestion_router)
+app.include_router(rule_suggestion_legacy_router)
 app.include_router(vector_router)
+app.include_router(rules_refresh_router)
+app.include_router(policy_history_admin_router)
 
 
+
+# Add startup event to initialize background tasks
+@app.on_event("startup")
+async def startup_event():
+    """Start background tasks on application startup"""
+    # Start GX rules refresh task
+    from app.vector_db.gx_rules_store import start_rules_refresh_task
+    asyncio.create_task(start_rules_refresh_task())
 
 if __name__ == "__main__":
     import uvicorn

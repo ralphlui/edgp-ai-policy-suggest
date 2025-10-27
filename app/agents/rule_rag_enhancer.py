@@ -35,13 +35,18 @@ class RuleRAGEnhancer:
             schema_embedding = await embed_column_names_batched_async([schema_str])
             logger.info(f"Embedding generated successfully: {len(schema_embedding[0])} dimensions")
             
-            # Retrieve similar policies
-            logger.info(f"Retrieving similar policies for domain {domain} with min success rate 0.8")
-            similar_policies = await self.policy_store.retrieve_similar_policies(
+            # Hybrid intent query text
+            query_text = self._build_hybrid_query_text(domain=domain, schema=schema)
+
+            # Retrieve similar policies via hybrid retrieval
+            logger.info(f"Retrieving similar policies (hybrid) for domain {domain}")
+            similar_policies = await self.policy_store.retrieve_policies_hybrid(
+                query_text=query_text,
                 query_embedding=schema_embedding[0],
+                org_id=None,
                 domain=domain,
-                min_success_rate=0.8,
-                top_k=3
+                top_k=3,
+                min_success_score=0.8,
             )
             logger.info(f"Found {len(similar_policies)} similar policies")
 
@@ -136,6 +141,21 @@ Ensure the suggested rules:
             schema_parts.append(f"Column: {col_name}, Type: {dtype}, Examples: {', '.join(map(str, sample_values[:3]))}")
         return "\n".join(schema_parts)
 
+    def _build_hybrid_query_text(self, domain: str, schema: Dict[str, Any]) -> str:
+        """Build a compact intent query text for BM25 over embedding_text.
+
+        Includes domain, column names, and dtypes to improve lexical matching.
+        """
+        cols: List[str] = []
+        dtypes: List[str] = []
+        for col, info in schema.items():
+            cols.append(str(col))
+            if isinstance(info, dict) and "dtype" in info:
+                dtypes.append(str(info.get("dtype")))
+        cols_part = " ".join(cols[:20])  # cap to avoid overly long queries
+        dtypes_part = " ".join(sorted(set(dtypes))[:20])
+        return f"domain:{domain} columns:{cols_part} dtypes:{dtypes_part}"
+
     def _format_historical_context(self, similar_policies: List[Dict[str, Any]]) -> str:
         """Format historical policies into readable context"""
         if not similar_policies:
@@ -143,14 +163,22 @@ Ensure the suggested rules:
 
         context_parts = []
         for idx, policy in enumerate(similar_policies, 1):
-            success_rate = policy.get("performance_metrics", {}).get("success_rate", 0)
+            # Pull success from success_score or fallback to performance_metrics
+            success_rate = policy.get("success_score")
+            if success_rate is None:
+                success_rate = policy.get("performance_metrics", {}).get("success_rate", 0)
             rules = policy.get("rules", [])
-            
-            context_parts.append(f"\nHistorical Policy {idx} (Success Rate: {success_rate:.2%}):")
+
+            context_parts.append(f"\nHistorical Policy {idx} (Success Score: {float(success_rate):.2f}):")
             for rule in rules:
-                context_parts.append(f"- Rule Type: {rule.get('type')}")
-                context_parts.append(f"  Parameters: {rule.get('parameters')}")
-                if rule.get('description'):
-                    context_parts.append(f"  Description: {rule.get('description')}")
+                # Support both new and legacy rule shapes
+                gx = rule.get("gx_expectation") or rule.get("type")
+                params = rule.get("params") or rule.get("parameters")
+                why = rule.get("why") or rule.get("description")
+                col = rule.get("column_name") or rule.get("column")
+                context_parts.append(f"- Expectation: {gx} on {col}")
+                context_parts.append(f"  Params: {params}")
+                if why:
+                    context_parts.append(f"  Why: {why}")
 
         return "\n".join(context_parts)
