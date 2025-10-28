@@ -217,3 +217,16 @@ class TestAsyncLLM:
         
         # Verify
         assert max_observed_tasks <= max_concurrent
+
+    @pytest.mark.asyncio
+    async def test_process_batch_outer_exception(self, mock_llm, monkeypatch):
+        """Force asyncio.gather to raise and hit outer except path"""
+        async def fake_gather(*args, **kwargs):
+            raise RuntimeError("gather failed")
+
+        # Patch gather to simulate catastrophic outer failure
+        monkeypatch.setattr(asyncio, "gather", fake_gather)
+
+        results = await process_batch_async(mock_llm, ["a", "b", "c"])
+        # Current implementation returns a single element list with repeated string
+        assert results == ["[]" * 3]

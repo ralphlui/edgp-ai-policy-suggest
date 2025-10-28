@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 class GXRulesStore:
     def __init__(self):
-        # In-memory cache only; no vector DB
+       
         self._cache_rules: list | None = None
         self._current_hash: str | None = None
         self._last_update: datetime | None = None

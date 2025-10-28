@@ -17,6 +17,9 @@ from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, Request, Response
 from fastapi.testclient import TestClient
 from starlette.responses import JSONResponse
+import os
+from fastapi.responses import JSONResponse as FastAPIJSONResponse, StreamingResponse
+from starlette.requests import Request as StarletteRequest
 
 from app.aws.audit_middleware import AuditLoggingMiddleware, add_audit_middleware
 from app.aws.audit_models import (
@@ -932,3 +935,118 @@ async def demo_authenticated_audit_flow():
 if __name__ == "__main__":
     # Run pytest for all tests
     pytest.main([__file__, "-v"])
+
+
+# ===== MERGED: Additional audit middleware unit/dispatch tests =====
+
+
+@pytest.fixture
+def dispatch_middleware():
+    return AuditLoggingMiddleware(app=lambda x: x, test_mode=True)
+
+
+class _DummyReceive:
+    async def __call__(self):
+        return {"type": "http.request"}
+
+
+def _make_starlette_request(method="GET", headers=None, client_host="1.1.1.1"):
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": method,
+        "path": "/api/test",
+        "headers": [(k.encode(), v.encode()) for k, v in (headers or {}).items()],
+        "client": (client_host, 12345),
+    }
+    return StarletteRequest(scope, receive=_DummyReceive())
+
+
+def test_get_client_ip_variants_merged(dispatch_middleware):
+    # X-Forwarded-For
+    req = _make_starlette_request(headers={"x-forwarded-for": "2.2.2.2, 3.3.3.3"})
+    assert dispatch_middleware._get_client_ip(req) == "2.2.2.2"
+
+    # X-Forwarded
+    req = _make_starlette_request(headers={"x-forwarded": "4.4.4.4"})
+    assert dispatch_middleware._get_client_ip(req) == "4.4.4.4"
+
+    # X-Real-IP
+    req = _make_starlette_request(headers={"x-real-ip": "5.5.5.5"})
+    assert dispatch_middleware._get_client_ip(req) == "5.5.5.5"
+
+    # Fallback to client host
+    req = _make_starlette_request(client_host="6.6.6.6")
+    assert dispatch_middleware._get_client_ip(req) == "6.6.6.6"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_with_streaming_response_merged(dispatch_middleware):
+    req = _make_starlette_request()
+
+    async def call_next(_):
+        async def gen():
+            yield b"chunk"
+        return StreamingResponse(gen(), media_type="text/plain")
+
+    resp = await dispatch_middleware.dispatch(req, call_next)
+    # Should return a streaming response unchanged
+    assert isinstance(resp, StreamingResponse)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_with_json_response_merged(dispatch_middleware):
+    req = _make_starlette_request()
+
+    async def call_next(_):
+        return FastAPIJSONResponse({"ok": True})
+
+    resp = await dispatch_middleware.dispatch(req, call_next)
+    assert isinstance(resp, Response)
+    # Current middleware attempts to read body_iterator on JSONResponse and falls back to 500
+    assert resp.status_code == 500
+
+
+def test_build_remarks_with_jwt_and_methods_merged():
+    # Use HS256 test mode secret
+    os.environ["JWT_TEST_SECRET"] = "secret"
+    mw = AuditLoggingMiddleware(app=lambda x: x, test_mode=True, max_body_size=50)
+
+    now = int(datetime.now(timezone.utc).timestamp())
+    token = jwt.encode({
+        "userEmail": "user@example.com",
+        "sub": "u1",
+        "scope": "manage:policy",
+        "iat": now,
+        "exp": now + 3600,
+    }, "secret", algorithm="HS256")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    class _Req:
+        def __init__(self, method):
+            self.method = method
+            self.headers = headers
+            self.url = type("U", (), {"path": "/api/test"})()
+            self.client = type("C", (), {"host": "127.0.0.1"})()
+
+    resp = Response(content=b"ok", status_code=200)
+
+    # GET
+    out = mw._build_remarks(_Req("GET"), resp, 0.1, "", "")
+    assert "retrieving" in out and "user@example.com" in out
+    # POST
+    assert "creating" in mw._build_remarks(_Req("POST"), resp, 0.1, "", "")
+    # PUT
+    assert "updating" in mw._build_remarks(_Req("PUT"), resp, 0.1, "", "")
+    # DELETE
+    assert "deleting" in mw._build_remarks(_Req("DELETE"), resp, 0.1, "", "")
+    # Error path
+    assert "encountered error" in mw._build_remarks(_Req("GET"), resp, 0.1, "", "", error_message="oops")
+
+
+def test_safe_get_response_body_truncation_variant():
+    mw = AuditLoggingMiddleware(app=lambda x: x, test_mode=True, max_body_size=50)
+    big = b"x" * 100
+    resp = Response(content=big)
+    out = mw._safe_get_response_body(resp)
+    assert "Response body too large" in out

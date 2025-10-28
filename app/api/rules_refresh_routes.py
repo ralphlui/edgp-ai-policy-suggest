@@ -14,7 +14,7 @@ async def refresh_gx_rules():
     Falls back to default rules if Rule MS is unavailable.
     """
     try:
-        from app.vector_db.gx_rules_store import get_rules_store
+        from app.core.gx_rules_store import get_rules_store
 
         store = await get_rules_store()
         refreshed = await store.refresh_rules()

@@ -806,7 +806,7 @@ def manual_test_user_info_creation():
     assert user_info.user_id == "user123"
     assert user_info.scopes == ["manage:policy"]
     assert user_info.payload == token_payload
-    print("✅ UserInfo creation test passed")
+    print(" UserInfo creation test passed")
 
 
 def manual_test_standard_response():
@@ -880,3 +880,49 @@ if __name__ == "__main__":
     # Run manual tests
     import asyncio
     asyncio.run(run_manual_tests())
+
+
+# ==========================================================================
+# MERGED: Additional unit tests for TEST_MODE HS256 decode
+# ==========================================================================
+
+@pytest.mark.skipif(not IMPORTS_AVAILABLE, reason="Auth imports unavailable")
+def test_decode_token_with_test_secret_success(monkeypatch):
+    monkeypatch.setenv("TEST_MODE", "true")
+    monkeypatch.setenv("JWT_TEST_SECRET", "testsecret")
+
+    now = int(time.time())
+    payload = {
+        "userEmail": "user@example.com",
+        "scope": "view:org manage:policy",
+        "sub": "user-123",
+        "iat": now,
+        "exp": now + 3600,
+    }
+    token = jwt.encode(payload, "testsecret", algorithm="HS256")
+
+    validator = JWTTokenValidator()
+    decoded = validator.decode_token(token)
+    assert decoded["userEmail"] == payload["userEmail"]
+    assert decoded["sub"] == payload["sub"]
+
+
+@pytest.mark.skipif(not IMPORTS_AVAILABLE, reason="Auth imports unavailable")
+def test_decode_token_with_test_secret_invalid_token(monkeypatch):
+    monkeypatch.setenv("TEST_MODE", "true")
+    monkeypatch.setenv("JWT_TEST_SECRET", "testsecret")
+
+    now = int(time.time())
+    bad_payload = {
+        "userEmail": "user@example.com",
+        "scope": "view:org",
+        "sub": "user-123",
+        "iat": now,
+        "exp": now + 3600,
+    }
+    # sign with wrong secret to simulate invalid signature in TEST_MODE path
+    bad_token = jwt.encode(bad_payload, "wrong", algorithm="HS256")
+
+    validator = JWTTokenValidator()
+    with pytest.raises(HTTPException):
+        validator.decode_token(bad_token)

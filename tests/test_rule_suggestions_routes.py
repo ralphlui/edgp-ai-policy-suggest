@@ -182,3 +182,24 @@ def test_suggest_rules_unexpected_error_returns_500(client, monkeypatch):
     resp = client.post("/api/aips/rules/suggest", json=payload)
     assert resp.status_code == 500
     assert resp.json()["error"] == "Internal server error"
+
+
+def test_suggest_rules_bootstrap_failure_returns_500(client, monkeypatch):
+    """
+    Vector DB accessible and returns None for schema, but bootstrap_schema_for_domain raises.
+    Expect 500 from outer exception handler.
+    """
+    # Vector DB accessible (no exception), but no schema found
+    monkeypatch.setattr(rules_module, "get_schema_by_domain", lambda d: None)
+
+    # bootstrap fails inside the domain-not-found flow
+    def _bootstrap(_):
+        raise Exception("boom")
+    monkeypatch.setattr(rules_module, "bootstrap_schema_for_domain", _bootstrap)
+
+    payload = {"domain": "finance", "include_insights": False}
+    resp = client.post("/api/aips/rules/suggest", json=payload)
+    assert resp.status_code == 500
+    data = resp.json()
+    assert data["error"] == "Internal server error"
+    assert data["domain"] == "finance"

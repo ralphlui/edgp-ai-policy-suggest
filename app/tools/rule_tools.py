@@ -14,27 +14,12 @@ logger = logging.getLogger(__name__)
 
 @tool
 def fetch_gx_rules(query: str = "") -> list:
-    """Fetch GX rules from in-memory cache, falling back to Rule Microservice and defaults."""
+    """Fetch GX rules from Rule Microservice."""
     try:
-        # Try to get rules from in-memory cache first (non-async path)
-        from app.vector_db.gx_rules_store import get_rules_store_sync
-        store = get_rules_store_sync()
-        rules = store.get_cached_rules() or []
-        if rules:
-            # Group rules by type for efficient processing (kept for future use)
-            rules_by_type = {}
-            for rule in rules:
-                rule_type = rule.get("applies_to", ["all"])[0]
-                if rule_type not in rules_by_type:
-                    rules_by_type[rule_type] = []
-                rules_by_type[rule_type].append(rule)
-            return rules
-            
-        # Fallback to direct fetch from Rule Microservice
         rule_url = settings.rule_api_url or os.getenv("RULE_URL")
         if not rule_url or rule_url in ["{RULE_URL}", "RULE_URL"]:
             logger.warning("Rule Microservice URL not configured. Using default rules.")
-            return _get_default_rules()
+            return _get_default_rules()  # Return all default rules
             
         resp = requests.get(rule_url, timeout=3)  # Keep fast timeout
         resp.raise_for_status()
@@ -48,10 +33,10 @@ def fetch_gx_rules(query: str = "") -> list:
                 if rule_type not in rules_by_type:
                     rules_by_type[rule_type] = []
                 rules_by_type[rule_type].append(rule)
-            return rules
+            return rules  # Return all rules with type grouping
         return rules
     except Exception as e:
-        logger.warning(f"Could not fetch rules from cache or Rule Microservice. Using default rules. Error: {e}")
+        logger.warning(f"Rule Microservice not available. Using default rules. Error: {e}")
         return _get_default_rules()
 
 def _get_default_rules() -> list:
@@ -357,14 +342,8 @@ def _get_default_rules() -> list:
     ]
 
 @tool
-def suggest_column_rules(data_schema: dict, gx_rules: list, enhanced_prompt: str | None = None) -> str:
-    """Use LLM to suggest GX rules for all columns in a single call with optimized batching.
-
-    Args:
-        data_schema: The input schema driving rule generation
-        gx_rules: Available GX rule templates (from cache or service)
-        enhanced_prompt: Optional RAG-enhanced or supervisor-provided prompt to prime generation
-    """
+def suggest_column_rules(data_schema: dict, gx_rules: list) -> str:
+    """Use LLM to suggest GX rules for all columns in a single call with optimized batching."""
     
     openai_key = require_openai_api_key()
     llm = ChatOpenAI(
@@ -432,11 +411,9 @@ def suggest_column_rules(data_schema: dict, gx_rules: list, enhanced_prompt: str
                 'sample_values': data_schema[col].get('sample_values', [])
             }
         
-            # Generate prompt for all columns of this type
-            column_info = [f"{col}({data_type})" for col in group_columns]
-            base_prompt = get_enhanced_rule_prompt(domain, group_schema, type_rules)
-            # If an enhanced prompt was provided (e.g., from RAG or a supervisor), prepend it
-            prompt = (enhanced_prompt + "\n\n" + base_prompt) if enhanced_prompt else base_prompt
+        # Generate prompt for all columns of this type
+        column_info = [f"{col}({data_type})" for col in group_columns]
+        prompt = get_enhanced_rule_prompt(domain, group_schema, type_rules)
         
         # Add explicit JSON formatting instructions
         prompt += f"""
