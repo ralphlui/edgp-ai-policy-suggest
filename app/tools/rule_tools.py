@@ -49,8 +49,8 @@ def _get_default_rules() -> list:
         },
         {
             "rule_name": "ExpectColumnValuesToBeInSet",
-            "column_name": "test",
-            "value": ["value1", "value2"]
+            "column_name": "gender",
+            "value": ["M", "F", "X", "N", "U"]  # M (Male), F (Female), X (Non-binary/Other), N (Not specified), U (Unknown)
         },
         {
             "rule_name": "ExpectColumnValuesToNotBeInSet",
@@ -810,6 +810,9 @@ def convert_to_rule_ms_format(rule_input: dict) -> list:
     suggestions = rule_input.get("suggestions", {})
     result = []
 
+    if not isinstance(suggestions, dict):
+        return []
+
     for column, data in suggestions.items():
         if not isinstance(data, dict):
             continue
@@ -818,7 +821,13 @@ def convert_to_rule_ms_format(rule_input: dict) -> list:
         has_type_specific_rules = False
             
         for rule in data.get("expectations", []):
-            rule_name = rule.get("expectation_type")
+            if not isinstance(rule, dict):
+                continue
+
+            rule_name = rule.get("expectation_type", "")
+            if not rule_name:
+                continue
+
             kwargs = rule.get("kwargs", {})
             meta = rule.get("meta", {})
 
@@ -830,21 +839,30 @@ def convert_to_rule_ms_format(rule_input: dict) -> list:
 
             # Prepare rule value based on rule type
             rule_value = None
-            if kwargs:
+            if isinstance(kwargs, dict):
                 if "type_list" in kwargs:
-                    rule_value = {"type_list": kwargs["type_list"]}
+                    rule_value = kwargs["type_list"]  # Direct list value
                     has_type_specific_rules = True
                 elif "regex" in kwargs:
-                    rule_value = {"regex": kwargs["regex"]}
+                    rule_value = kwargs["regex"]  # Direct regex string
                     has_type_specific_rules = True
-                elif "min_value" in kwargs or "max_value" in kwargs:
+                elif "min_value" in kwargs and "max_value" in kwargs:
+                    # Keep both values for between rules
                     rule_value = {
                         "min_value": kwargs.get("min_value"),
                         "max_value": kwargs.get("max_value")
                     }
                     has_type_specific_rules = True
+                elif "min_value" in kwargs:
+                    # Direct value for greater than
+                    rule_value = kwargs["min_value"]
+                    has_type_specific_rules = True
+                elif "max_value" in kwargs:
+                    # Direct value for less than
+                    rule_value = kwargs["max_value"]
+                    has_type_specific_rules = True
                 elif "value_set" in kwargs:
-                    rule_value = {"value_set": kwargs["value_set"]}
+                    rule_value = kwargs["value_set"]  # Direct list value
                     has_type_specific_rules = True
                 else:
                     rule_value = kwargs
@@ -860,13 +878,20 @@ def convert_to_rule_ms_format(rule_input: dict) -> list:
         if not has_type_specific_rules:
             # Get column info from the original data schema
             col_info = data.get("column_info", {})
-            col_type = col_info.get("type", "").lower()
+            col_type = col_info.get("type", "").lower() if isinstance(col_info, dict) else ""
 
-            if col_type in ["number", "integer", "float"]:
+            # Check if it's a gender column by name
+            if "gender" in column.lower():
+                result.append({
+                    "rule_name": "ExpectColumnValuesToBeInSet",
+                    "column_name": column,
+                    "value": ["M", "F", "X", "N", "U"]  # M (Male), F (Female), X (Non-binary/Other), N (Not specified), U (Unknown)
+                })
+            elif col_type in ["number", "integer", "float"]:
                 result.append({
                     "rule_name": "ExpectColumnValuesToBeInTypeList",
                     "column_name": column,
-                    "value": {"type_list": ["number"]}
+                    "value": ["number"]  # Direct list value
                 })
             elif col_type == "date" or column.upper().endswith("_DATE") or "DATE" in column.upper():
                 result.append({
@@ -878,7 +903,7 @@ def convert_to_rule_ms_format(rule_input: dict) -> list:
                 result.append({
                     "rule_name": "ExpectColumnValuesToBeInTypeList",
                     "column_name": column,
-                    "value": {"type_list": ["string"]}
+                    "value": ["string"]  # Direct list value
                 })
 
     return result

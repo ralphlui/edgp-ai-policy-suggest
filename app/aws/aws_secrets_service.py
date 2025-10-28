@@ -93,14 +93,14 @@ class AWSSecretsManagerService:
                     len(aws_access_key_id) > 10 and len(aws_secret_access_key) > 10 and
                     not aws_access_key_id.startswith('AWS_')):
                     
-                    logger.info("🔑 Using explicit environment credentials")
+                    logger.info(" Using explicit environment credentials")
                     session = boto3.session.Session(
                         aws_access_key_id=aws_access_key_id,
                         aws_secret_access_key=aws_secret_access_key,
                         region_name=aws_region
                     )
                 else:
-                    logger.warning("� Invalid or missing AWS credentials, trying default credential chain")
+                    logger.warning(" Invalid or missing AWS credentials, trying default credential chain")
                     session = boto3.session.Session(region_name=aws_region)
                 
                 self._client = session.client("secretsmanager", region_name=aws_region)

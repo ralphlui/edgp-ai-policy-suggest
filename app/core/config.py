@@ -125,6 +125,10 @@ class Settings(BaseSettings):
     embed_model: str = Field(default=os.getenv("EMBED_MODEL", "text-embedding-3-small"), alias="EMBED_MODEL")
     embed_dim: int = Field(default=int(os.getenv("EMBED_DIM", "1536")), alias="EMBED_DIM")
 
+    # Policy History Configuration
+    policy_min_success_rate: float = Field(default=float(os.getenv("POLICY_MIN_SUCCESS_RATE", "0.7")), alias="POLICY_MIN_SUCCESS_RATE")
+    policy_top_k: int = Field(default=int(os.getenv("POLICY_TOP_K", "3")), alias="POLICY_TOP_K")
+
     # LLM
     schema_llm_model: str = Field(default=os.getenv("SCHEMA_LLM_MODEL", "gpt-4o-mini"), alias="SCHEMA_LLM_MODEL")
     rules_llm_model: str = Field(default=os.getenv("RULES_LLM_MODEL", "gpt-4o-mini"), alias="RULES_LLM_MODEL")

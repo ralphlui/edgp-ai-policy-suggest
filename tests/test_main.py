@@ -845,6 +845,95 @@ class TestMainAppEdgeCases:
         assert response.status_code in [400, 404, 422]
 
 
+# ===== REAL APP EXTRA TESTS (merged from test_main_real_extras.py) =====
+
+@pytest.mark.skipif(not REAL_APP_AVAILABLE, reason="Real app not available")
+class TestMainRealExtras:
+    """Additional real-app tests to increase coverage for app.main"""
+
+    def test_info_vector_stats_and_domains(self):
+        client = TestClient(real_app)
+
+        # Build a fake store with index exists and stats
+        class _Indices:
+            def exists(self, index):
+                return True
+            def stats(self, index):
+                return {"indices": {index: {"total": {"docs": {"count": 77}}}}}
+        class _Client:
+            indices = _Indices()
+        from types import SimpleNamespace
+        fake_store = SimpleNamespace(client=_Client(), index_name="edgp-index")
+        def get_all_domains_realtime(force_refresh=False):
+            return ["customer", "product"]
+        setattr(fake_store, "get_all_domains_realtime", get_all_domains_realtime)
+
+        with patch("app.api.aoss_routes.get_store", return_value=fake_store):
+            r = client.get("/api/aips/info")
+            assert r.status_code == 200
+            data = r.json()
+            assert data.get("vector_db", {}).get("index_exists") is True
+            assert data.get("vector_db", {}).get("document_count") == 77
+            assert data.get("domain_count") == 2
+            assert data.get("domains") == ["customer", "product"]
+
+    def test_info_vector_stats_error(self):
+        client = TestClient(real_app)
+
+        class _Indices:
+            def exists(self, index):
+                return True
+            def stats(self, index):
+                raise RuntimeError("boom")
+        class _Client:
+            indices = _Indices()
+        from types import SimpleNamespace
+        fake_store = SimpleNamespace(client=_Client(), index_name="edgp-index")
+        setattr(fake_store, "get_all_domains_realtime", lambda force_refresh=False: ["x"]) 
+
+        with patch("app.api.aoss_routes.get_store", return_value=fake_store):
+            r = client.get("/api/aips/info")
+            assert r.status_code == 200
+            data = r.json()
+            assert data.get("vector_db", {}).get("index_exists") is True
+            assert data.get("vector_db", {}).get("document_count") == "unknown"
+            assert "stats_error" in data.get("vector_db", {})
+
+    def test_health_audit_unavailable(self):
+        client = TestClient(real_app)
+
+        # Audit not configured -> unavailable. Patch where app.main binds the function and avoid OS calls
+        with patch("app.main.audit_system_health", return_value={
+            "sqs_configured": False,
+            "sqs_client_initialized": False,
+            "connection_test": False,
+        }), patch("app.api.aoss_routes.get_store", return_value=None):
+            r = client.get("/api/aips/health")
+            assert r.status_code == 200
+            data = r.json()
+            assert data["services"]["audit_system"] == "unavailable"
+
+    def test_health_validation_unavailable_flag(self):
+        client = TestClient(real_app)
+        # Force the flag path to 'unavailable'
+        with patch("app.main.VALIDATION_AVAILABLE", False):
+            r = client.get("/api/aips/health")
+            assert r.status_code == 200
+            data = r.json()
+            assert data["services"]["validation"] == "unavailable"
+
+    def test_cors_preflight_real(self):
+        client = TestClient(real_app)
+        r = client.options(
+            "/api/aips/health",
+            headers={
+                "Origin": "http://localhost:3000",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        assert r.status_code != 403
+
+
 @pytest.mark.skipif(not REAL_APP_AVAILABLE, reason="Real app not available")
 class TestMainAppConfiguration:
     """Test app configuration and setup with real app"""
@@ -1180,3 +1269,132 @@ class TestMainAppStartupLogic:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# ===== MERGED: Exception handler tests from test_main_handlers.py =====
+
+@pytest.mark.asyncio
+async def test_http_exception_handler_authentication_paths_merged():
+    # Import inside test to avoid interference with fake app fixtures
+    import app.main as main
+    from fastapi import HTTPException
+    from starlette.requests import Request as StarletteRequest
+
+    class DummyReceive:
+        async def __call__(self):
+            return {"type": "http.request"}
+
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "GET",
+        "path": "/",
+        "headers": [],
+        "client": ("127.0.0.1", 12345),
+    }
+    req = StarletteRequest(scope, receive=DummyReceive())
+
+    # 401 path
+    resp = await main.http_exception_handler(req, HTTPException(status_code=401, detail="Bearer token missing"))
+    body = resp.body.decode()
+    assert resp.status_code == 401
+    assert ("Authentication token missing" in body) or ("Authentication required" in body)
+
+    # 403 path
+    resp = await main.http_exception_handler(req, HTTPException(status_code=403, detail="Insufficient permissions"))
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_http_exception_handler_general_paths_merged():
+    import app.main as main
+    from fastapi import HTTPException
+    from starlette.requests import Request as StarletteRequest
+
+    class DummyReceive:
+        async def __call__(self):
+            return {"type": "http.request"}
+
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "GET",
+        "path": "/",
+        "headers": [],
+        "client": ("127.0.0.1", 12345),
+    }
+    req = StarletteRequest(scope, receive=DummyReceive())
+
+    resp = await main.http_exception_handler(req, HTTPException(status_code=418, detail="I'm a teapot"))
+    assert resp.status_code == 418
+    assert b"I'm a teapot" in resp.body
+
+
+# ===== MERGED: Additional real-app tests from test_main_real_extra2.py =====
+
+@pytest.mark.skipif(not REAL_APP_AVAILABLE, reason="Real app not available")
+class TestMainRealExtra2Merged:
+    def test_health_store_none_validation_disabled_audit_unavailable(self, monkeypatch):
+        import app.main as main
+        from fastapi.testclient import TestClient
+        import app.api.aoss_routes as aoss_routes
+
+        monkeypatch.setattr(aoss_routes, "get_store", lambda: None)
+        monkeypatch.setattr(main, "VALIDATION_AVAILABLE", False)
+        monkeypatch.setattr(main, "audit_system_health", lambda: {
+            "sqs_configured": False,
+            "sqs_client_initialized": False,
+            "connection_test": False,
+        })
+
+        client = TestClient(main.app)
+        r = client.get("/api/aips/health")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["services"]["opensearch"] == "unavailable"
+        assert body["services"]["validation"] == "unavailable"
+        assert body["services"]["audit_system"] == "unavailable"
+        assert body["status"] in ("ok", "degraded")
+
+    def test_info_index_missing_and_domains_error(self, monkeypatch):
+        import app.main as main
+        from fastapi.testclient import TestClient
+        import app.api.aoss_routes as aoss_routes
+
+        class _Indices:
+            def exists(self, index):
+                return False
+            def stats(self, index):
+                return {"indices": {index: {"total": {"docs": {"count": 0}}}}}
+
+        class _Client:
+            indices = _Indices()
+
+        from types import SimpleNamespace
+        fake_store = SimpleNamespace(client=_Client(), index_name="edgp-index")
+        def _domains_fail(force_refresh=False):
+            raise RuntimeError("domain fail")
+        setattr(fake_store, "get_all_domains_realtime", _domains_fail)
+
+        monkeypatch.setattr(aoss_routes, "get_store", lambda: fake_store)
+        client = TestClient(main.app)
+        r = client.get("/api/aips/info")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["vector_db"]["index_exists"] is False
+        assert data.get("domains_error")
+
+    def test_info_vector_error_when_get_store_raises(self, monkeypatch):
+        import app.main as main
+        from fastapi.testclient import TestClient
+        import app.api.aoss_routes as aoss_routes
+
+        def _raise():
+            raise RuntimeError("boom")
+        monkeypatch.setattr(aoss_routes, "get_store", _raise)
+
+        client = TestClient(main.app)
+        r = client.get("/api/aips/info")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["vector_db"]["status"] == "error"

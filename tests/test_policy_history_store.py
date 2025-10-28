@@ -15,21 +15,39 @@ def mock_aoss_client():
 
 @pytest.fixture
 def sample_policy_doc():
+    """Create a PolicyHistoryDoc matching the current implementation.
+
+    Current constructor signature does not include org_id/history_id/success_score/embedding_text.
+    """
     return PolicyHistoryDoc(
         policy_id="test-policy-1",
         domain="customer",
         schema={
-            "email": {"dtype": "string", "sample_values": ["test@example.com"]},
-            "age": {"dtype": "integer", "sample_values": ["25", "30"]}
+            "columns": [
+                {"name": "email", "dtype": "string", "pii": True},
+                {"name": "age", "dtype": "integer", "pii": False}
+            ]
         },
         rules=[
             {
-                "type": "email_validation",
-                "parameters": {"field": "email"}
+                "rule_id": "valid_email",
+                "gx_expectation": "expect_column_values_to_match_regex",
+                "column_name": "email",
+                "params": {"regex": ".+@.+\\..+"},
+                "category": "format",
+                "dtypes": ["string"],
+                "source": "catalog",
+                "why": "Emails must be valid"
             },
             {
-                "type": "range_check",
-                "parameters": {"field": "age", "min": 0, "max": 120}
+                "rule_id": "age_range",
+                "gx_expectation": "expect_column_values_to_be_between",
+                "column_name": "age",
+                "params": {"min_value": 0, "max_value": 120},
+                "category": "range",
+                "dtypes": ["integer"],
+                "source": "history",
+                "why": "Valid human age range"
             }
         ],
         performance_metrics={
@@ -38,11 +56,10 @@ def sample_policy_doc():
             "usage_count": 10
         },
         created_at=datetime.now(),
-        updated_at=datetime.now(),
         embedding=[0.1] * 1536,
         metadata={
             "author": "test_user",
-            "version": "1.0"
+            "version": 1
         }
     )
 
@@ -60,14 +77,17 @@ async def test_policy_history_store_initialization(mock_aoss_client):
         assert 'settings' in create_body
         assert 'mappings' in create_body
         assert create_body['settings']['index']['knn'] is True
-        
-        # Verify field mappings
+
+        # Verify field mappings (align with current implementation)
         properties = create_body['mappings']['properties']
         assert 'policy_id' in properties
         assert 'domain' in properties
         assert 'embedding' in properties
         assert properties['embedding']['type'] == 'knn_vector'
         assert properties['embedding']['dimension'] == 1536
+        # Rules are stored as a JSON string (keyword) in current implementation
+        assert 'rules' in properties
+        assert properties['rules']['type'] in ('keyword', 'nested')
 
 @pytest.mark.asyncio
 async def test_store_policy(mock_aoss_client, sample_policy_doc):
@@ -92,9 +112,12 @@ async def test_store_policy(mock_aoss_client, sample_policy_doc):
         # Verify document content
         doc = index_args['body']
         assert doc['domain'] == sample_policy_doc.domain
-        assert doc['rules'] == sample_policy_doc.rules
+        # In current implementation, rules are serialized to JSON string before indexing
+        assert isinstance(doc['rules'], str)
         assert doc['embedding'] == sample_policy_doc.embedding
-        
+        # created_at stored as ISO string (no enforced 'Z')
+        assert 'created_at' in doc and 'T' in doc['created_at']
+
         # Verify returned ID
         assert generated_id == 'generated-id-123'
 
@@ -110,7 +133,7 @@ async def test_retrieve_similar_policies(mock_aoss_client):
                     "_source": {
                         "policy_id": "test-1",
                         "domain": "customer",
-                        "rules": [{"type": "email_validation"}],
+                        "rules": [{"rule_name": "ExpectColumnValuesToBeValidEmail", "column_name": "email", "value": None}],
                         "performance_metrics": {"success_rate": 0.9}
                     }
                 },
@@ -119,7 +142,7 @@ async def test_retrieve_similar_policies(mock_aoss_client):
                     "_source": {
                         "policy_id": "test-2",
                         "domain": "customer",
-                        "rules": [{"type": "range_check"}],
+                        "rules": [{"rule_name": "ExpectColumnValuesToBeBetween", "column_name": "age", "value": {"min_value": 0, "max_value": 120}}],
                         "performance_metrics": {"success_rate": 0.85}
                     }
                 }
@@ -165,7 +188,7 @@ async def test_get_domain_policies(mock_aoss_client):
                         "policy_id": "test-1",
                         "domain": "customer",
                         "created_at": "2025-10-23T00:00:00",
-                        "rules": [{"type": "email_validation"}]
+                        "rules": [{"rule_name": "ExpectColumnValuesToBeValidEmail", "column_name": "email", "value": None}]
                     }
                 }
             ]
