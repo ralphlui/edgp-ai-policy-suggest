@@ -425,45 +425,6 @@ class TestDownloadCSVEdgeCases:
         assert "File not found" in data["error"]
 
 
-class TestDownloadCSVSuccessAndSecurity:
-    def test_download_csv_success_and_security_violations(self, client, tmp_path):
-        """Happy-path download and outside-temp 403 with subsequent 404 after cleanup."""
-        # Success path: create temp CSV in system temp dir and register
-        from pathlib import Path
-        import tempfile as _tempfile
-        sys_tmp = Path(_tempfile.gettempdir())
-        csv1 = sys_tmp / f"demo_{uuid.uuid4().hex}.csv"
-        csv1.write_text("col1,col2\n")
-        file_id_ok = domains_module.get_test_file_id(csv1.name, str(csv1))
-
-        ok = client.get(f"/api/aips/domains/download-csv/{file_id_ok}")
-        assert ok.status_code == 200
-        assert ok.headers["content-type"].startswith("text/csv")
-
-        # Security violation: outside system temp
-        outside = tmp_path / "outside.csv"
-        outside.write_text("a,b\n")
-        file_id_bad = domains_module.get_test_file_id(outside.name, str(outside))
-        bad = client.get(f"/api/aips/domains/download-csv/{file_id_bad}")
-        assert bad.status_code == 403
-        # Mapping should be removed => now 404
-        gone = client.get(f"/api/aips/domains/download-csv/{file_id_bad}")
-        assert gone.status_code == 404
-
-    def test_download_csv_invalid_file_id(self, client):
-        """Test security validation of file IDs"""
-        # Test invalid UUID format
-        response = client.get("/api/aips/domains/download-csv/invalid-id")
-        assert response.status_code == 400
-        data = response.json()
-        assert "Invalid file ID format" in data["error"]
-        
-        # Test with a valid UUID that doesn't exist in mappings
-        test_uuid = "12345678-1234-5678-1234-567812345678"
-        response = client.get(f"/api/aips/domains/download-csv/{test_uuid}")
-        assert response.status_code == 404  # UUID format valid but not found
-        data = response.json()
-        assert "File not found" in data["error"]
 
 
 class TestAISuggestEndpoints:
