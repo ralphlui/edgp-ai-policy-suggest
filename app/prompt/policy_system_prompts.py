@@ -7,39 +7,37 @@ Comprehensive prompt templates with expert context and business intelligence
 
 RULE_GENERATION_PROMPT = """Role: Senior data quality engineer.
 
-Input:
+CONTRACT:
+Return ONLY a minified JSON array (no prose, no comments) with this exact shape:
+[{"column":"<name>","expectations":[{"expectation_type":"<type>","kwargs":{},"meta":{"reasoning":"<=80 chars"}}]}]
+
+CONTEXT:
 - domain: {domain}
 - schema (list of {"column_name": "...", "type": "..."}): {schema}
 - existing rules: {rules}
 - history (optional ranges/pattern hints): {historical_context}
 
-Output:
-Return ONLY a minified JSON array (no prose, no comments). Each item has this exact shape:
-{"column":"<name>","expectations":[
-  {"expectation_type":"<type>","kwargs":{},"meta":{"reasoning":"<=80 chars"}}
-]}
-- Max 3 expectations per column.
-- Allowed keys only: column, expectations, expectation_type, kwargs, meta, reasoning.
+TASK:
+Suggest up to 3 lightweight Great Expectations rules per column in the schema. Prefer checks that are fast to evaluate and unlikely to generate false positives.
 
-Allowed expectation_type values:
+DO:
+- Use only columns present in the schema.
+- Keep meta.reasoning short and concrete (<=80 chars).
+- Prefer null checks, type checks, uniqueness for ID-like columns, and simple regex only when clearly implied.
+
+DON'T:
+- Guess numeric ranges or patterns when not supported by history; omit instead.
+- Duplicate or contradict existing rules.
+
+ALLOWED expectation_type values:
 - expect_column_values_to_not_be_null
 - expect_column_values_to_be_of_type
-- expect_column_values_to_be_unique  (IDs only)
-- expect_column_values_to_be_between (numeric/date; use history; otherwise OMIT)
-- expect_column_values_to_match_regex (only if name clearly implies pattern, e.g., email)
-
-Rules:
-- Use only columns present in the schema.
-- Prefer simple, fast checks.
-- Do NOT guess ranges or regex; omit when uncertain.
-- Do NOT duplicate or contradict existing rules.
-- Keep meta.reasoning short and concrete.
+- expect_column_values_to_be_unique
+- expect_column_values_to_be_between
+- expect_column_values_to_match_regex
 
 Example (format only):
-[{"column":"customer_id","expectations":[
-  {"expectation_type":"expect_column_values_to_not_be_null","kwargs":{},"meta":{"reasoning":"IDs must exist"}},
-  {"expectation_type":"expect_column_values_to_be_unique","kwargs":{},"meta":{"reasoning":"IDs should be unique"}}
-]}]
+[{"column":"customer_id","expectations":[{"expectation_type":"expect_column_values_to_not_be_null","kwargs":{},"meta":{"reasoning":"IDs must exist"}},{"expectation_type":"expect_column_values_to_be_unique","kwargs":{},"meta":{"reasoning":"IDs should be unique"}}]}]
 """
 
 DOMAIN_EXTENSION_PROMPT = """You are a Data Integration Specialist with expertise in schema evolution and domain expansion.Return ONLY a JSON object with this exact structure. No prose. No markdown.
