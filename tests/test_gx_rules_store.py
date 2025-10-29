@@ -147,3 +147,52 @@ async def test_get_rules_store_sync_matches_singleton():
     sync_store = get_rules_store_sync()
     async_store = await get_rules_store()
     assert sync_store is async_store
+
+
+# Additional edge-case coverage to increase branch execution
+
+@pytest.mark.asyncio
+async def test_refresh_rules_http_error_fallback_to_defaults(monkeypatch):
+    """When HTTP fetch raises, we fall back to default rules."""
+    # Set a non-placeholder URL so HTTP path is attempted
+    monkeypatch.setattr(
+        gxmod, "settings", types.SimpleNamespace(rule_api_url="http://example.com/rules"), raising=False
+    )
+
+    # Simulate HTTP failure
+    with patch("app.core.gx_rules_store.requests.get", side_effect=Exception("boom")), \
+         patch("app.tools.rule_tools._get_default_rules", return_value=SAMPLE_RULES):
+        store = GXRulesStore()
+        changed = await store.refresh_rules()
+        assert changed is True
+        assert store.get_cached_rules() == SAMPLE_RULES
+
+
+@pytest.mark.asyncio
+async def test_get_rules_exception_fallback_defaults(monkeypatch):
+    """If initialize raises, get_rules should return defaults (exception path)."""
+    monkeypatch.setenv("RULE_URL", "RULE_URL")
+    store = GXRulesStore()
+
+    async def boom():
+        raise RuntimeError("init failed")
+
+    # Force exception in initialize to hit except branch
+    store.initialize = boom
+
+    with patch("app.tools.rule_tools._get_default_rules", return_value=SAMPLE_RULES):
+        result = await store.get_rules()
+        assert result == SAMPLE_RULES
+
+
+@pytest.mark.asyncio
+async def test_get_stored_hash_exception_returns_none(monkeypatch):
+    """_get_stored_hash returns None on initialize error."""
+    store = GXRulesStore()
+
+    async def boom():
+        raise RuntimeError("init failed")
+
+    store.initialize = boom
+    h = await store._get_stored_hash()
+    assert h is None

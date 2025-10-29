@@ -418,6 +418,12 @@ class TestAuditMiddleware:
         assert middleware.log_request_body is True
         assert middleware.log_response_body is False
         assert middleware.max_body_size == 10000
+
+    def test_dispatch_error_path_returns_500(self):
+        """Exercise the exception branch in dispatch when the route raises."""
+        # The setup has a /test-error route that raises Exception
+        resp = self.client.get("/test-error")
+        assert resp.status_code == 500
     
     def test_get_client_ip_all_scenarios(self):
         """Test all client IP extraction scenarios"""

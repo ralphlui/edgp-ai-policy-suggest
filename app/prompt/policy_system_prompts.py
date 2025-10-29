@@ -5,33 +5,41 @@ Comprehensive prompt templates with expert context and business intelligence
 """
 
 
-RULE_GENERATION_PROMPT = """You are an expert data governance and quality assurance specialist with 15+ years of experience in enterprise data validation. Your expertise includes:
+RULE_GENERATION_PROMPT = """Role: Senior data quality engineer.
 
-CONTRACT:
-[
-  {"column":"<name>", "expectations":[
-    {"expectation_type":"<gx_type>", "kwargs":{...}, "meta":{"reasoning":"<<=100 chars>"}}
-    // up to 3 items
-  ]}
-]
-
-CONTEXT:
+Input:
 - domain: {domain}
-- schema: {schema}
-- rules: {rules}
-- history: {historical_context}
+- schema (list of {"column_name": "...", "type": "..."}): {schema}
+- existing rules: {rules}
+- history (optional ranges/pattern hints): {historical_context}
 
-TASK:
-For each provided column, output up to 3 Great Expectations that maximize correctness and speed. Prefer simple, proven checks.
+Output:
+Return ONLY a minified JSON array (no prose, no comments). Each item has this exact shape:
+{"column":"<name>","expectations":[
+  {"expectation_type":"<type>","kwargs":{},"meta":{"reasoning":"<=80 chars"}}
+]}
+- Max 3 expectations per column.
+- Allowed keys only: column, expectations, expectation_type, kwargs, meta, reasoning.
 
-DO:
+Allowed expectation_type values:
+- expect_column_values_to_not_be_null
+- expect_column_values_to_be_of_type
+- expect_column_values_to_be_unique  (IDs only)
+- expect_column_values_to_be_between (numeric/date; use history; otherwise OMIT)
+- expect_column_values_to_match_regex (only if name clearly implies pattern, e.g., email)
+
+Rules:
 - Use only columns present in the schema.
-- If bounds/patterns are unknown, use conservative checks (type + not_null, unique for IDs).
-- Keep meta.reasoning short.
+- Prefer simple, fast checks.
+- Do NOT guess ranges or regex; omit when uncertain.
+- Do NOT duplicate or contradict existing rules.
+- Keep meta.reasoning short and concrete.
 
-DON'T:
-- Invent columns or guess specific ranges.
-- Output anything outside the JSON array.
+Example (format only):
+[{"column":"customer_id","expectations":[
+  {"expectation_type":"expect_column_values_to_not_be_null","kwargs":{},"meta":{"reasoning":"IDs must exist"}},
+  {"expectation_type":"expect_column_values_to_be_unique","kwargs":{},"meta":{"reasoning":"IDs should be unique"}}
+]}]
 """
 
 DOMAIN_EXTENSION_PROMPT = """You are a Data Integration Specialist with expertise in schema evolution and domain expansion.Return ONLY a JSON object with this exact structure. No prose. No markdown.

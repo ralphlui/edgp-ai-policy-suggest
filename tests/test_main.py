@@ -1267,6 +1267,41 @@ class TestMainAppStartupLogic:
         assert main.logger.name == 'app.main'
 
 
+# ===== MERGED: __main__ entrypoint test from test_main_entrypoint.py =====
+
+def test_main_entrypoint_invokes_uvicorn_merged(monkeypatch):
+    import types, runpy, sys
+
+    # Provide fake settings
+    core_cfg = types.ModuleType("app.core.config")
+    core_cfg.settings = types.SimpleNamespace(host="127.0.0.1", port=8001)
+    monkeypatch.setitem(sys.modules, "app.core.config", core_cfg)
+
+    # Stub uvicorn.run
+    uvicorn_mod = types.ModuleType("uvicorn")
+    recorded = {}
+    def fake_run(app_path, host, port, log_level, access_log, use_colors):
+        recorded.update({
+            "app_path": app_path,
+            "host": host,
+            "port": port,
+            "log_level": log_level,
+            "access_log": access_log,
+            "use_colors": use_colors,
+        })
+    uvicorn_mod.run = fake_run
+    monkeypatch.setitem(sys.modules, "uvicorn", uvicorn_mod)
+
+    # Run the module as __main__ to execute the entrypoint block
+    runpy.run_module("app.main", run_name="__main__")
+
+    # Assert our stub was invoked with expected parameters
+    assert recorded.get("app_path") == "app.main:app"
+    assert recorded.get("host") == "127.0.0.1"
+    assert recorded.get("port") == 8001
+    assert recorded.get("log_level") in ("info", "debug", "warning", "error")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 

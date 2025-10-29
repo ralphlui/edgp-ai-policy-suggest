@@ -254,6 +254,19 @@ async def suggest_rules(
                 else:
                     state = result
                     
+                # Build agent insights and omit null-valued fields like final_reflection
+                agent_insights = {
+                    "reasoning_steps": len(state.thoughts),
+                    "observations": len(state.observations),
+                    "reflections": len(state.reflections),
+                    "execution_time": state.execution_metrics.get("total_execution_time", 0),
+                    "detailed_confidence_scores": state.confidence_scores,  # For debugging
+                    "key_thoughts": state.thoughts[-3:] if state.thoughts else [],  # Last 3 thoughts
+                }
+                final_reflection = state.reflections[-1] if state.reflections else None
+                if final_reflection is not None:
+                    agent_insights["final_reflection"] = final_reflection
+
                 return { 
                     "rule_suggestions": state.rule_suggestions or [],
                     "confidence": {
@@ -261,15 +274,7 @@ async def suggest_rules(
                         "level": _get_confidence_level(state),
                         "factors": _get_confidence_factors(state)
                     },
-                    "agent_insights": {
-                        "reasoning_steps": len(state.thoughts),
-                        "observations": len(state.observations),
-                        "reflections": len(state.reflections),
-                        "execution_time": state.execution_metrics.get("total_execution_time", 0),
-                        "detailed_confidence_scores": state.confidence_scores,  # For debugging
-                        "key_thoughts": state.thoughts[-3:] if state.thoughts else [],  # Last 3 thoughts
-                        "final_reflection": state.reflections[-1] if state.reflections else None
-                    }
+                    "agent_insights": agent_insights
                 }
             else:
                 # Standard agent execution (backwards compatible)

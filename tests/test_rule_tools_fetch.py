@@ -1,10 +1,39 @@
+import types
+import sys
+from datetime import datetime
+from unittest.mock import patch, Mock, AsyncMock
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from datetime import datetime
-from unittest.mock import AsyncMock, Mock, patch
-import sys
-import types
+
+from app.tools import rule_tools as rt
+
+
+def test_fetch_gx_rules_default_when_no_url(monkeypatch):
+    # Ensure no URL configured
+    monkeypatch.setattr(rt, "settings", types.SimpleNamespace(rule_api_url=None), raising=False)
+    monkeypatch.delenv("RULE_URL", raising=False)
+
+    rules = rt.fetch_gx_rules("")
+    assert isinstance(rules, list)
+    # Should include a known default rule
+    assert any(r.get("rule_name") == "ExpectColumnValuesToBeInSet" for r in rules)
+
+
+def test_fetch_gx_rules_http_error_fallback(monkeypatch):
+    # Set a URL but make request fail
+    monkeypatch.setattr(rt, "settings", types.SimpleNamespace(rule_api_url="http://example.com/rules"), raising=False)
+
+    with patch.object(rt.requests, "get", side_effect=RuntimeError("boom")):
+        rules = rt.fetch_gx_rules("")
+        assert isinstance(rules, list)
+        assert any(r.get("rule_name") == "ExpectColumnValuesToBeInSet" for r in rules)
+
+
+# =====================
+# Rules refresh routes
+# =====================
 
 # Import the router under test
 from app.api.rules_refresh_routes import router as rules_refresh_router

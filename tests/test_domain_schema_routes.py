@@ -373,6 +373,44 @@ class TestSchemaEndpointErrors:
         assert "error" in data
 
 
+class TestAdditionalSchemaPaths:
+    """Additional coverage for index-missing and store-none branches."""
+
+    def test_list_domains_in_vectordb_index_missing(self, client, monkeypatch):
+        """GET /schema when index does not exist should return 200 with zero totals and message."""
+        store = MockStore()
+        store.client.indices.exists.return_value = False
+        monkeypatch.setattr(domains_module, "get_store", lambda: store)
+
+        resp = client.get("/api/aips/domains/schema")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total_domains"] == 0
+        assert "does not exist yet" in data.get("message", "")
+
+    def test_get_domain_from_vectordb_index_missing(self, client, monkeypatch):
+        """GET /{domain} when index does not exist should return 404 with explanatory message."""
+        store = MockStore()
+        store.client.indices.exists.return_value = False
+        monkeypatch.setattr(domains_module, "get_store", lambda: store)
+
+        resp = client.get("/api/aips/domains/sales")
+        assert resp.status_code == 404
+        assert "does not exist yet" in resp.json().get("message", "")
+
+
+class TestDomainsStoreNone:
+    def test_get_and_verify_domains_store_none(self, client, monkeypatch):
+        """When store is None, list and verify endpoints should signal 503."""
+        monkeypatch.setattr(domains_module, "get_store", lambda: None)
+        r1 = client.get("/api/aips/domains")
+        assert r1.status_code == 503
+
+        monkeypatch.setattr(domains_module, "get_store", lambda: None)
+        r2 = client.get("/api/aips/domains/verify/acct")
+        assert r2.status_code == 503
+
+
 class TestDownloadCSVEdgeCases:
     """Test CSV download edge cases with secure file ID system"""
     
@@ -385,6 +423,32 @@ class TestDownloadCSVEdgeCases:
         assert response.status_code == 404
         data = response.json()
         assert "File not found" in data["error"]
+
+
+class TestDownloadCSVSuccessAndSecurity:
+    def test_download_csv_success_and_security_violations(self, client, tmp_path):
+        """Happy-path download and outside-temp 403 with subsequent 404 after cleanup."""
+        # Success path: create temp CSV in system temp dir and register
+        from pathlib import Path
+        import tempfile as _tempfile
+        sys_tmp = Path(_tempfile.gettempdir())
+        csv1 = sys_tmp / f"demo_{uuid.uuid4().hex}.csv"
+        csv1.write_text("col1,col2\n")
+        file_id_ok = domains_module.get_test_file_id(csv1.name, str(csv1))
+
+        ok = client.get(f"/api/aips/domains/download-csv/{file_id_ok}")
+        assert ok.status_code == 200
+        assert ok.headers["content-type"].startswith("text/csv")
+
+        # Security violation: outside system temp
+        outside = tmp_path / "outside.csv"
+        outside.write_text("a,b\n")
+        file_id_bad = domains_module.get_test_file_id(outside.name, str(outside))
+        bad = client.get(f"/api/aips/domains/download-csv/{file_id_bad}")
+        assert bad.status_code == 403
+        # Mapping should be removed => now 404
+        gone = client.get(f"/api/aips/domains/download-csv/{file_id_bad}")
+        assert gone.status_code == 404
 
     def test_download_csv_invalid_file_id(self, client):
         """Test security validation of file IDs"""
@@ -638,6 +702,151 @@ class TestConfigurationAndSettings:
         # Should fail without proper auth - 403 is also a valid auth failure
         assert response.status_code in [401, 403, 422, 500]
 
+
+class TestDomainRoutesMerged:
+    """Happy-path and additional scenarios merged from test_domain_routes.py"""
+
+    def test_get_domains_success(self, client, monkeypatch):
+        store = MockStore(domains=["customer", "orders"])
+        monkeypatch.setattr(domains_module, "get_store", lambda: store)
+        resp = client.get("/api/aips/domains")
+        assert resp.status_code == 200
+        j = resp.json()
+        assert j["success"] is True
+        assert j["totalRecord"] == 2
+        assert set(j["data"]) == {"customer", "orders"}
+
+    def test_verify_domain_exists_true(self, client, monkeypatch):
+        store = MockStore(domains=["customer"])
+        monkeypatch.setattr(domains_module, "get_store", lambda: store)
+        resp = client.get("/api/aips/domains/verify/Customer")
+        assert resp.status_code == 200
+        j = resp.json()
+        assert j["exists"] is True
+        assert j["normalized_domain"] == "customer"
+
+    def test_verify_domain_exists_false(self, client, monkeypatch):
+        store = MockStore(domains=["orders"])
+        monkeypatch.setattr(domains_module, "get_store", lambda: store)
+        resp = client.get("/api/aips/domains/verify/customer")
+        assert resp.status_code == 200
+        j = resp.json()
+        assert j["exists"] is False
+
+    def test_get_domain_from_vectordb_not_found(self, client, monkeypatch):
+        store = MockStore()
+        store.client.indices.exists.return_value = True
+        store.client.search.return_value = {"hits": {"total": {"value": 0}, "hits": []}}
+        monkeypatch.setattr(domains_module, "get_store", lambda: store)
+        resp = client.get("/api/aips/domains/unknown")
+        assert resp.status_code == 404
+        assert resp.json()["found"] is False
+
+    def test_get_domain_from_vectordb_found(self, client, monkeypatch):
+        search_payload = {
+            "hits": {
+                "total": {"value": 2},
+                "hits": [
+                    {"_source": {"column_name": "id", "metadata": {"type": "string"}, "sample_values": []}},
+                    {"_source": {"column_name": "name", "metadata": {"type": "string"}, "sample_values": []}},
+                ],
+            }
+        }
+        store = MockStore()
+        store.client.indices.exists.return_value = True
+        store.client.search.return_value = search_payload
+        monkeypatch.setattr(domains_module, "get_store", lambda: store)
+        resp = client.get("/api/aips/domains/customer")
+        assert resp.status_code == 200
+        j = resp.json()
+        assert j["found"] is True
+        assert j["column_count"] == 2
+        assert [c["column_name"] for c in j["columns"]] == ["id", "name"]
+
+    def test_create_duplicate_domain_returns_409(self, client, monkeypatch, mock_embeddings):
+        store = MockStore(domains=["customer"])  # existing
+        monkeypatch.setattr(domains_module, "get_store", lambda: store)
+        body = {"domain": "Customer", "columns": ["id", "name"]}
+        resp = client.post("/api/aips/domains/create", json=body)
+        assert resp.status_code == 409
+        data = resp.json()
+        assert data["status"] == "exists"
+        assert data["existing_domain"] == "customer"
+        assert data["case_conflict"] is False
+        assert "extend-schema" in data["actions"]
+
+    def test_create_success_stores_docs_and_generates_rules(self, client, monkeypatch, mock_embeddings):
+        store = MockStore(domains=[])
+        monkeypatch.setattr(domains_module, "get_store", lambda: store)
+
+        # Patch rule agent import path
+        class _FakeRunner:
+            @staticmethod
+            def run_agent(schema):
+                return [{"column": k, "rule": "not_empty"} for k in schema][:2]
+        sys.modules["app.agents.agent_runner"] = type("X", (), {"run_agent": _FakeRunner.run_agent})
+
+        body = {"domain": "Orders", "columns": ["order_id", "created_at"], "return_csv": False}
+        resp = client.post("/api/aips/domains/create", json=body)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] in ("success", "partial_success")
+        assert data["domain"] == "orders"
+        assert len(store._upserts) == 2
+        assert "rules_available" in data and "rule_suggestions" in data
+
+    def test_create_return_csv_includes_download_info_and_downloads(self, client, monkeypatch, mock_embeddings):
+        store = MockStore(domains=[])
+        monkeypatch.setattr(domains_module, "get_store", lambda: store)
+
+        class _FakeRunner:
+            @staticmethod
+            def run_agent(schema):
+                return [{"column": k, "rule": "not_empty"} for k in schema][:1]
+        sys.modules["app.agents.agent_runner"] = type("X", (), {"run_agent": _FakeRunner.run_agent})
+
+        body = {"domain": "Inventory", "columns": ["sku", "qty"], "return_csv": True}
+        resp = client.post("/api/aips/domains/create", json=body)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["csv_download"]["available"] is True
+        download_url = data["csv_download"]["download_url"]
+        file_id = download_url.split("/")[-1]
+        dl = client.get(f"/api/aips/domains/download-csv/{file_id}")
+        assert dl.status_code == 200
+        assert dl.headers["content-type"].startswith("text/csv")
+
+    def test_download_csv_wrong_extension_returns_400(self, client):
+        resp = client.get("/api/aips/domains/download-csv/not-a-uuid.txt")
+        assert resp.status_code == 400
+        data = resp.json()
+        assert "Invalid file ID format" in data["error"]
+
+    def test_suggest_schema_needs_domain(self, client):
+        resp = client.post("/api/aips/domains/suggest-schema", json={})
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "Missing required field: 'domain'"
+
+    def test_suggest_schema_success(self, client, monkeypatch):
+        class FakeSuggester:
+            async def bootstrap_schema_with_preferences(self, business_description, user_preferences):
+                return {"columns": [{"column_name": "id"}, {"column_name": "email"}]}
+        sys.modules["app.agents.schema_suggester"] = type("X", (), {"SchemaSuggesterEnhanced": FakeSuggester})
+        resp = client.post("/api/aips/domains/suggest-schema", json={"domain": "customer"})
+        assert resp.status_code == 200
+        j = resp.json()
+        assert j["domain"] == "customer"
+        assert j["suggested_columns"] == ["id", "email"]
+
+    def test_suggest_extend_schema_404_when_domain_missing(self, client, monkeypatch):
+        store = MockStore()
+        store.client.indices.exists.return_value = True
+        store.client.search.return_value = {"hits": {"total": {"value": 0}, "hits": []}}
+        monkeypatch.setattr(domains_module, "get_store", lambda: store)
+        resp = client.post("/api/aips/domains/suggest-extend-schema/customer", json={})
+        assert resp.status_code == 404
+        msg = resp.json()["message"].lower()
+        assert "cannot suggest extensions for a domain that doesn't exist" in msg
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
