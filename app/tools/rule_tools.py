@@ -350,9 +350,9 @@ def suggest_column_rules(data_schema: dict, gx_rules: list) -> str:
         model=settings.schema_llm_model,
         openai_api_key=openai_key,
         temperature=0.1,
-        max_tokens=4000,
-        request_timeout=45,  # Increased for larger batches
-        max_retries=3,  # More retries for reliability
+        max_tokens=2000,  # Reduce to cap response size for speed
+        request_timeout=35,  # Tighter timeout to prevent long tail latency
+        max_retries=3,
         streaming=False,
         seed=42
     )
@@ -414,36 +414,13 @@ def suggest_column_rules(data_schema: dict, gx_rules: list) -> str:
         # Generate prompt for all columns of this type
         column_info = [f"{col}({data_type})" for col in group_columns]
         prompt = get_enhanced_rule_prompt(domain, group_schema, type_rules)
+
+        # Minimal, strict output instruction to reduce tokens
+        prompt += (
+            f"\nColumns: {', '.join(column_info)}\n"
+            "Respond ONLY with a minified JSON array as specified. No prose, no markdown."
+        )
         
-        # Add explicit JSON formatting instructions
-        prompt += f"""
-Generate rules for these {data_type} columns: {', '.join(column_info)}
-
-CRITICAL: Respond ONLY with a JSON array. No markdown, no extra text.
-
-Required structure:
-[
-  {{
-    "column": "column_name",
-    "expectations": [
-      {{
-        "expectation_type": "rule_name",
-        "kwargs": {{
-          "key": "value"
-        }}
-      }}
-    ]
-  }}
-]
-
-Rules should be relevant for {data_type} data type. Include validation for:
-- Data type consistency 
-- Value ranges if applicable
-- Format validation
-- Business logic constraints
-- NULL handling
-"""
-
         try:
             # Make single LLM call for all columns of this type
             result = _process_llm_request(llm, prompt)

@@ -265,3 +265,29 @@ async def test_error_handling(mock_aoss_client):
         with pytest.raises(Exception) as exc_info:
             store = PolicyHistoryStore(index_name="test-policy-index")
         assert "Failed to create index" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_retrieve_similar_policies_exception_returns_empty():
+    """If the underlying client.search raises, we should return an empty list (not crash)."""
+    bad_client = Mock()
+    bad_client.search.side_effect = Exception("boom")
+    bad_client.indices.exists.return_value = True
+
+    with patch('app.aoss.policy_history_store.create_aoss_client', return_value=bad_client):
+        store = PolicyHistoryStore(index_name="t")
+        results = await store.retrieve_similar_policies([0.0] * 1536, domain="x", min_success_rate=0.5, top_k=2)
+        assert results == []
+
+
+@pytest.mark.asyncio
+async def test_update_policy_feedback_not_found_raises():
+    """If no policy_id is found during feedback update, the store should raise a ValueError."""
+    client = Mock()
+    client.indices.exists.return_value = True
+    client.search.return_value = {"hits": {"total": {"value": 0}, "hits": []}}
+
+    with patch('app.aoss.policy_history_store.create_aoss_client', return_value=client):
+        store = PolicyHistoryStore(index_name="t")
+        with pytest.raises(ValueError):
+            await store.update_policy_feedback("unknown", {"ok": True})

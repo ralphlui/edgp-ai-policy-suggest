@@ -563,6 +563,51 @@ class TestAuthServiceIntegration:
             assert headers["X-User-Id"] == "user123"
             assert headers["Authorization"] == f"Bearer {original_token}"
 
+    # ========== Merged from test_auth_service_additional.py ==========
+
+    @pytest.mark.asyncio
+    async def test_validate_user_unauthorized_401(self):
+        validator = JWTTokenValidator()
+        payload = {"userEmail": "u@example.com", "sub": "u1"}
+
+        # Simulate 401 from auth service
+        with patch("httpx.AsyncClient.get") as mock_get:
+            resp = Mock()
+            resp.status_code = 401
+            mock_get.return_value = resp
+
+            with pytest.raises(HTTPException) as exc:
+                await validator.validate_user_with_auth_service(payload, "tok")
+            assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+            assert "not authorized" in str(exc.value.detail).lower()
+
+    @pytest.mark.asyncio
+    async def test_validate_user_other_error_maps_to_503(self):
+        validator = JWTTokenValidator()
+        payload = {"userEmail": "u@example.com", "sub": "u1"}
+
+        with patch("httpx.AsyncClient.get") as mock_get:
+            resp = Mock()
+            resp.status_code = 500
+            resp.text = "oops"
+            mock_get.return_value = resp
+
+            with pytest.raises(HTTPException) as exc:
+                await validator.validate_user_with_auth_service(payload, "tok")
+            assert exc.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+
+    @pytest.mark.asyncio
+    async def test_validate_user_request_error(self):
+        validator = JWTTokenValidator()
+        payload = {"userEmail": "u@example.com", "sub": "u1"}
+
+        # Simulate network layer error
+        with patch("httpx.AsyncClient.get", side_effect=httpx.RequestError("bad net")):
+            with pytest.raises(HTTPException) as exc:
+                await validator.validate_user_with_auth_service(payload, "tok")
+            assert exc.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+            assert "unavailable" in str(exc.value.detail).lower()
+
 
 # ==========================================================================
 # ENHANCED EDGE CASES AND ERROR CONDITIONS

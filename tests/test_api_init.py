@@ -263,5 +263,24 @@ class TestImportPatterns:
         assert len(available_functions) > 0
 
 
+# ======================================================================
+# Merged: small re-export smoke test from test_api_init_exports.py
+# ======================================================================
+
+def test_app_api_reexports_importable():
+    """Smoke test to ensure re-exports in app.api are importable."""
+    # Importing suggest_rules should succeed via app.api re-export
+    from app.api import suggest_rules  # noqa: F401
+
+    # Import several names re-exported from aoss_routes
+    from app.api import (
+        get_store,  # noqa: F401
+        check_vectordb_status,  # noqa: F401
+    )
+
+    # If import reached here, lines in try blocks were executed
+    assert callable(get_store)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
