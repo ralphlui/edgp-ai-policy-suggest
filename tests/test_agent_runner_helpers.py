@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 from app.agents import agent_runner as ar
+from app.state.state import AgentState
 
 
 def make_state(**overrides):
@@ -17,7 +18,7 @@ def make_state(**overrides):
     }
     base.update(overrides)
     # Build a real AgentState instance to ensure Pydantic behavior
-    return ar.AgentState(**base)
+    return AgentState(**base)
 
 
 def test_create_agent_plan_variants():

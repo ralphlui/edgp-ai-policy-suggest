@@ -208,7 +208,8 @@ async def suggest_rules(
                 
                 # Use enhanced agent with RAG and full insights
                 with log_duration("Agent workflow initialization"):
-                    from app.agents.agent_runner import AgentState, build_graph
+                    from app.agents.agent_runner import build_graph
+                    from app.state.state import AgentState
                     
                     # Enhance prompt with historical context
                     enhanced_prompt = await rag_enhancer.enhance_prompt_with_history(

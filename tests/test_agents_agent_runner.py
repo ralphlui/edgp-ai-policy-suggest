@@ -33,7 +33,8 @@ class TestAgentRunnerModule:
 
     def test_agent_runner_functions_exist(self):
         """Test agent runner functions exist"""
-        from app.agents.agent_runner import run_agent, build_graph, AgentState
+        from app.agents.agent_runner import run_agent, build_graph
+        from app.state.state import AgentState
         assert callable(run_agent)
         assert callable(build_graph)
         assert AgentState is not None
@@ -193,7 +194,8 @@ class TestAgentReasoning:
     
     def test_reason_before_action_fetch(self):
         """Test reasoning before fetch action"""
-        from app.agents.agent_runner import reason_before_action, AgentState
+        from app.agents.agent_runner import reason_before_action
+        from app.state.state import AgentState
         
         state = AgentState(
             data_schema={
@@ -215,7 +217,8 @@ class TestAgentReasoning:
     
     def test_reason_before_action_suggest(self):
         """Test reasoning before suggest action"""
-        from app.agents.agent_runner import reason_before_action, AgentState
+        from app.agents.agent_runner import reason_before_action
+        from app.state.state import AgentState
         
         state = AgentState(
             data_schema={"col1": {"type": "string"}},

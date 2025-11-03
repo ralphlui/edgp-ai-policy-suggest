@@ -1,454 +1,244 @@
 #!/usr/bin/env python3
 """
 Unit Tests for State Management Module
-Tests LangGraphState and ColumnInfo Pydantic models
+Tests AgentState, AgentStep, AgentPlan, and ColumnInfo Pydantic models
 """
 
 import pytest
 from typing import List, Dict
 from pydantic import ValidationError
+import time
 
-from app.state.state import ColumnInfo, LangGraphState
+from app.state.state import ColumnInfo, AgentState, AgentStep, AgentPlan
 
 
 class TestColumnInfo:
     """Test ColumnInfo model"""
     
-    def test_column_info_creation_valid(self):
-        """Test creating ColumnInfo with valid data"""
-        column = ColumnInfo(
-            dtype="string",
-            sample_values=["value1", "value2", "value3"]
-        )
+    def test_column_info_basic_creation(self):
+        """Test basic ColumnInfo creation"""
+        column = ColumnInfo(dtype="string", sample_values=["a", "b", "c"])
         
         assert column.dtype == "string"
-        assert column.sample_values == ["value1", "value2", "value3"]
+        assert column.sample_values == ["a", "b", "c"]
     
-    def test_column_info_creation_empty_samples(self):
-        """Test creating ColumnInfo with empty sample values"""
-        column = ColumnInfo(
-            dtype="integer",
-            sample_values=[]
-        )
+    def test_column_info_different_types(self):
+        """Test ColumnInfo with different data types"""
+        # String type
+        str_column = ColumnInfo(dtype="string", sample_values=["value1", "value2"])
+        assert str_column.dtype == "string"
         
-        assert column.dtype == "integer"
+        # Integer type
+        int_column = ColumnInfo(dtype="integer", sample_values=["1", "2", "3"])
+        assert int_column.dtype == "integer"
+        
+        # Date type
+        date_column = ColumnInfo(dtype="date", sample_values=["2023-01-01", "2023-12-31"])
+        assert date_column.dtype == "date"
+    
+    def test_column_info_empty_samples(self):
+        """Test ColumnInfo with empty sample values"""
+        column = ColumnInfo(dtype="string", sample_values=[])
+        
+        assert column.dtype == "string"
         assert column.sample_values == []
     
-    def test_column_info_creation_numeric_types(self):
-        """Test ColumnInfo with various numeric data types"""
-        column = ColumnInfo(
-            dtype="float",
-            sample_values=["1.5", "2.7", "3.14"]
-        )
+    def test_column_info_large_samples(self):
+        """Test ColumnInfo with many sample values"""
+        samples = [f"value_{i}" for i in range(100)]
+        column = ColumnInfo(dtype="string", sample_values=samples)
         
-        assert column.dtype == "float"
-        assert column.sample_values == ["1.5", "2.7", "3.14"]
-    
-    def test_column_info_creation_date_type(self):
-        """Test ColumnInfo with date data type"""
-        column = ColumnInfo(
-            dtype="date",
-            sample_values=["2023-01-01", "2023-12-31"]
-        )
-        
-        assert column.dtype == "date"
-        assert column.sample_values == ["2023-01-01", "2023-12-31"]
-    
-    def test_column_info_missing_dtype(self):
-        """Test ColumnInfo creation fails without dtype"""
-        with pytest.raises(ValidationError) as exc_info:
-            ColumnInfo(sample_values=["test"])
-        
-        assert "dtype" in str(exc_info.value)
-    
-    def test_column_info_missing_sample_values(self):
-        """Test ColumnInfo creation fails without sample_values"""
-        with pytest.raises(ValidationError) as exc_info:
-            ColumnInfo(dtype="string")
-        
-        assert "sample_values" in str(exc_info.value)
-    
-    def test_column_info_invalid_sample_values_type(self):
-        """Test ColumnInfo creation fails with non-list sample_values"""
-        with pytest.raises(ValidationError):
-            ColumnInfo(dtype="string", sample_values="not_a_list")
-    
-    def test_column_info_json_serialization(self):
-        """Test ColumnInfo can be serialized to JSON"""
-        column = ColumnInfo(
-            dtype="boolean",
-            sample_values=["true", "false"]
-        )
-        
-        json_data = column.model_dump()
-        assert json_data == {
-            "dtype": "boolean",
-            "sample_values": ["true", "false"]
-        }
+        assert len(column.sample_values) == 100
+        assert column.sample_values[0] == "value_0"
+        assert column.sample_values[-1] == "value_99"
 
 
-class TestLangGraphState:
-    """Test LangGraphState model"""
+class TestAgentStep:
+    """Test AgentStep model"""
     
-    def test_langraph_state_minimal_creation(self):
-        """Test creating LangGraphState with only required field"""
-        state = LangGraphState(domain="test_domain")
-        
-        assert state.domain == "test_domain"
-        assert state.schema is None
-        assert state.rules is None
-        assert state.query_embedding is None
-        assert state.results is None
-        assert state.filtered_columns is None
-        assert state.pii_only is False
-        assert state.allowed_types == ["string", "integer", "date"]
-        assert state.csv_ready is False
-    
-    def test_langraph_state_full_creation(self):
-        """Test creating LangGraphState with all fields populated"""
-        schema_data = {
-            "column1": ColumnInfo(dtype="string", sample_values=["a", "b"]),
-            "column2": ColumnInfo(dtype="integer", sample_values=["1", "2"])
-        }
-        
-        state = LangGraphState(
-            domain="test_domain",
-            schema=schema_data,
-            rules=["rule1", "rule2"],
-            query_embedding=[0.1, 0.2, 0.3],
-            results=[{"result": "value"}],
-            filtered_columns=[{"column": "info"}],
-            pii_only=True,
-            allowed_types=["string", "float"],
-            csv_ready=True
+    def test_agent_step_basic_creation(self):
+        """Test basic AgentStep creation"""
+        step = AgentStep(
+            step_id="step_1",
+            action="fetch",
+            thought="Need to fetch rules",
+            observation="Rules fetched successfully"
         )
         
-        assert state.domain == "test_domain"
-        assert state.schema == schema_data
-        assert state.rules == ["rule1", "rule2"]
-        assert state.query_embedding == [0.1, 0.2, 0.3]
-        assert state.results == [{"result": "value"}]
-        assert state.filtered_columns == [{"column": "info"}]
-        assert state.pii_only is True
-        assert state.allowed_types == ["string", "float"]
-        assert state.csv_ready is True
+        assert step.step_id == "step_1"
+        assert step.action == "fetch"
+        assert step.thought == "Need to fetch rules"
+        assert step.observation == "Rules fetched successfully"
+        assert step.reflection is None
+        assert isinstance(step.timestamp, float)
+        assert step.metadata == {}
     
-    def test_langraph_state_missing_domain(self):
-        """Test LangGraphState creation fails without domain"""
+    def test_agent_step_with_optional_fields(self):
+        """Test AgentStep with all fields"""
+        metadata = {"duration": 1.5, "success": True}
+        step = AgentStep(
+            step_id="step_2",
+            action="suggest",
+            thought="Generate suggestions",
+            observation="Suggestions generated",
+            reflection="Good quality suggestions",
+            metadata=metadata
+        )
+        
+        assert step.reflection == "Good quality suggestions"
+        assert step.metadata == metadata
+
+
+class TestAgentPlan:
+    """Test AgentPlan model"""
+    
+    def test_agent_plan_basic_creation(self):
+        """Test basic AgentPlan creation"""
+        plan = AgentPlan(
+            goal="Generate validation rules",
+            steps=["fetch", "suggest", "format"]
+        )
+        
+        assert plan.goal == "Generate validation rules"
+        assert plan.steps == ["fetch", "suggest", "format"]
+        assert plan.current_step == 0
+        assert plan.context == {}
+        assert plan.constraints == []
+    
+    def test_agent_plan_with_optional_fields(self):
+        """Test AgentPlan with all fields"""
+        context = {"domain": "finance", "complexity": "high"}
+        constraints = ["no_pii", "fast_execution"]
+        
+        plan = AgentPlan(
+            goal="Generate complex rules",
+            steps=["analyze", "fetch", "suggest", "validate"],
+            current_step=1,
+            context=context,
+            constraints=constraints
+        )
+        
+        assert plan.current_step == 1
+        assert plan.context == context
+        assert plan.constraints == constraints
+
+
+class TestAgentState:
+    """Test AgentState model"""
+    
+    def test_agent_state_minimal_creation(self):
+        """Test creating AgentState with only required field"""
+        schema = {"column1": {"dtype": "string", "sample_values": ["a", "b"]}}
+        state = AgentState(data_schema=schema)
+        
+        assert state.data_schema == schema
+        assert state.gx_rules is None
+        assert state.raw_suggestions is None
+        assert state.rule_suggestions is None
+        assert state.thoughts == []
+        assert state.observations == []
+        assert state.reflections == []
+        assert state.errors == []
+        assert state.retry_count == 0
+        assert state.max_retries == 2
+    
+    def test_agent_state_with_plan(self):
+        """Test AgentState with AgentPlan"""
+        schema = {"column1": {"dtype": "string"}}
+        plan = AgentPlan(goal="test", steps=["step1", "step2"])
+        
+        state = AgentState(data_schema=schema, plan=plan)
+        
+        assert state.plan == plan
+        assert state.plan.goal == "test"
+    
+    def test_agent_state_with_steps(self):
+        """Test AgentState with step history"""
+        schema = {"column1": {"dtype": "string"}}
+        step = AgentStep(
+            step_id="test_step",
+            action="test_action",
+            thought="test thought",
+            observation="test observation"
+        )
+        
+        state = AgentState(data_schema=schema, step_history=[step])
+        
+        assert len(state.step_history) == 1
+        assert state.step_history[0].step_id == "test_step"
+    
+    def test_agent_state_missing_schema(self):
+        """Test AgentState creation fails without data_schema"""
         with pytest.raises(ValidationError) as exc_info:
-            LangGraphState()
+            AgentState()
         
-        assert "domain" in str(exc_info.value)
+        assert "data_schema" in str(exc_info.value)
     
-    def test_langraph_state_schema_with_column_info(self):
-        """Test LangGraphState with properly typed schema"""
-        column1 = ColumnInfo(dtype="string", sample_values=["val1", "val2"])
-        column2 = ColumnInfo(dtype="date", sample_values=["2023-01-01"])
-        
-        state = LangGraphState(
-            domain="finance",
-            schema={"col1": column1, "col2": column2}
-        )
-        
-        assert state.domain == "finance"
-        assert len(state.schema) == 2
-        assert state.schema["col1"].dtype == "string"
-        assert state.schema["col2"].dtype == "date"
-    
-    def test_langraph_state_empty_rules(self):
-        """Test LangGraphState with empty rules list"""
-        state = LangGraphState(
-            domain="test_domain",
-            rules=[]
-        )
-        
-        assert state.domain == "test_domain"
-        assert state.rules == []
-    
-    def test_langraph_state_complex_query_embedding(self):
-        """Test LangGraphState with complex query embedding"""
-        embedding = [0.123, -0.456, 0.789, -0.012, 0.345]
-        
-        state = LangGraphState(
-            domain="test_domain",
-            query_embedding=embedding
-        )
-        
-        assert state.query_embedding == embedding
-    
-    def test_langraph_state_multiple_results(self):
-        """Test LangGraphState with multiple results"""
-        results = [
-            {"id": 1, "score": 0.9},
-            {"id": 2, "score": 0.8},
-            {"id": 3, "score": 0.7}
+    def test_agent_state_with_suggestions(self):
+        """Test AgentState with rule suggestions"""
+        schema = {"column1": {"dtype": "string"}}
+        suggestions = [
+            {"rule_name": "ExpectColumnValuesToNotBeNull", "column_name": "column1"},
+            {"rule_name": "ExpectColumnValuesToBeInTypeList", "column_name": "column1"}
         ]
         
-        state = LangGraphState(
-            domain="test_domain",
-            results=results
-        )
+        state = AgentState(data_schema=schema, rule_suggestions=suggestions)
         
-        assert state.results == results
-        assert len(state.results) == 3
+        assert state.rule_suggestions == suggestions
+        assert len(state.rule_suggestions) == 2
     
-    def test_langraph_state_filtered_columns_structure(self):
-        """Test LangGraphState with structured filtered columns"""
-        filtered_cols = [
-            {"name": "email", "type": "string", "pii": True},
-            {"name": "age", "type": "integer", "pii": False}
-        ]
+    def test_agent_state_execution_metrics(self):
+        """Test AgentState with execution metrics"""
+        schema = {"column1": {"dtype": "string"}}
+        metrics = {"total_execution_time": 5.2, "steps_completed": 4}
         
-        state = LangGraphState(
-            domain="test_domain",
-            filtered_columns=filtered_cols
-        )
+        state = AgentState(data_schema=schema, execution_metrics=metrics)
         
-        assert state.filtered_columns == filtered_cols
-    
-    def test_langraph_state_pii_only_toggle(self):
-        """Test LangGraphState with pii_only flag variations"""
-        # Test explicit True
-        state1 = LangGraphState(domain="test", pii_only=True)
-        assert state1.pii_only is True
-        
-        # Test explicit False  
-        state2 = LangGraphState(domain="test", pii_only=False)
-        assert state2.pii_only is False
-        
-        # Test default (should be False)
-        state3 = LangGraphState(domain="test")
-        assert state3.pii_only is False
-    
-    def test_langraph_state_allowed_types_customization(self):
-        """Test LangGraphState with custom allowed_types"""
-        custom_types = ["string", "float", "boolean", "datetime"]
-        
-        state = LangGraphState(
-            domain="test_domain",
-            allowed_types=custom_types
-        )
-        
-        assert state.allowed_types == custom_types
-    
-    def test_langraph_state_allowed_types_default(self):
-        """Test LangGraphState default allowed_types"""
-        state = LangGraphState(domain="test_domain")
-        
-        assert state.allowed_types == ["string", "integer", "date"]
-    
-    def test_langraph_state_csv_ready_flag(self):
-        """Test LangGraphState csv_ready flag variations"""
-        # Test explicit True
-        state1 = LangGraphState(domain="test", csv_ready=True)
-        assert state1.csv_ready is True
-        
-        # Test explicit False
-        state2 = LangGraphState(domain="test", csv_ready=False)
-        assert state2.csv_ready is False
-        
-        # Test default (should be False)
-        state3 = LangGraphState(domain="test")
-        assert state3.csv_ready is False
-    
-    def test_langraph_state_json_serialization(self):
-        """Test LangGraphState can be serialized to JSON"""
-        state = LangGraphState(
-            domain="test_domain",
-            rules=["rule1"],
-            pii_only=True,
-            csv_ready=True
-        )
-        
-        json_data = state.model_dump()
-        expected = {
-            "domain": "test_domain",
-            "schema": None,
-            "rules": ["rule1"],
-            "query_embedding": None,
-            "results": None,
-            "filtered_columns": None,
-            "pii_only": True,
-            "allowed_types": ["string", "integer", "date"],
-            "csv_ready": True
-        }
-        
-        assert json_data == expected
-    
-    def test_langraph_state_json_serialization_with_schema(self):
-        """Test LangGraphState JSON serialization with schema"""
-        column = ColumnInfo(dtype="string", sample_values=["a", "b"])
-        state = LangGraphState(
-            domain="test_domain",
-            schema={"col1": column}
-        )
-        
-        json_data = state.model_dump()
-        
-        assert json_data["domain"] == "test_domain"
-        assert json_data["schema"]["col1"]["dtype"] == "string"
-        assert json_data["schema"]["col1"]["sample_values"] == ["a", "b"]
+        assert state.execution_metrics == metrics
+        assert isinstance(state.execution_start_time, float)
 
 
 class TestIntegrationScenarios:
     """Test integration scenarios for state management"""
     
-    def test_state_workflow_simulation(self):
-        """Test a complete state workflow simulation"""
-        # Step 1: Initial state creation
-        state = LangGraphState(domain="finance")
-        assert state.csv_ready is False
-        
-        # Step 2: Add schema
+    def test_full_agent_workflow_simulation(self):
+        """Test a complete agent workflow simulation"""
+        # Create initial state
         schema = {
-            "account_id": ColumnInfo(dtype="string", sample_values=["ACC001", "ACC002"]),
-            "balance": ColumnInfo(dtype="float", sample_values=["100.50", "200.75"]),
-            "email": ColumnInfo(dtype="string", sample_values=["user@example.com"])
+            "user_id": {"dtype": "string", "sample_values": ["U001", "U002"]},
+            "balance": {"dtype": "float", "sample_values": ["100.50", "200.75"]}
         }
-        state.schema = schema
         
-        # Step 3: Add rules
-        state.rules = ["No PII in reports", "Balance must be positive"]
+        plan = AgentPlan(
+            goal="Generate validation rules for financial data",
+            steps=["fetch", "suggest", "format", "convert"]
+        )
         
-        # Step 4: Add query embedding
-        state.query_embedding = [0.1, 0.2, 0.3, 0.4, 0.5]
+        state = AgentState(data_schema=schema, plan=plan)
         
-        # Step 5: Add results
-        state.results = [
-            {"rule_id": 1, "confidence": 0.95},
-            {"rule_id": 2, "confidence": 0.87}
+        # Simulate workflow steps
+        step1 = AgentStep(
+            step_id="fetch_1",
+            action="fetch",
+            thought="Fetching GX rules",
+            observation="Rules fetched successfully"
+        )
+        
+        state.step_history.append(step1)
+        state.thoughts.append("Starting rule generation process")
+        
+        # Add suggestions
+        suggestions = [
+            {"rule_name": "ExpectColumnValuesToNotBeNull", "column_name": "user_id"},
+            {"rule_name": "ExpectColumnValuesToBeOfType", "column_name": "balance"}
         ]
-        
-        # Step 6: Filter columns (PII detection)
-        state.filtered_columns = [
-            {"name": "account_id", "pii": False},
-            {"name": "email", "pii": True}
-        ]
-        state.pii_only = True
-        
-        # Step 7: Mark as ready for CSV export
-        state.csv_ready = True
+        state.rule_suggestions = suggestions
         
         # Verify final state
-        assert state.domain == "finance"
-        assert len(state.schema) == 3
-        assert len(state.rules) == 2
-        assert len(state.query_embedding) == 5
-        assert len(state.results) == 2
-        assert len(state.filtered_columns) == 2
-        assert state.pii_only is True
-        assert state.csv_ready is True
-    
-    def test_state_partial_updates(self):
-        """Test partial state updates maintain consistency"""
-        state = LangGraphState(domain="healthcare")
-        
-        # Add schema first
-        state.schema = {
-            "patient_id": ColumnInfo(dtype="string", sample_values=["P001"]),
-            "diagnosis": ColumnInfo(dtype="string", sample_values=["Condition A"])
-        }
-        
-        # Update allowed types
-        state.allowed_types = ["string", "integer"]
-        
-        # Add filtered columns
-        state.filtered_columns = [{"name": "patient_id", "pii": True}]
-        
-        # Verify state consistency
-        assert state.domain == "healthcare"
-        assert "patient_id" in state.schema
-        assert "string" in state.allowed_types
-        assert state.filtered_columns[0]["pii"] is True
-        assert state.csv_ready is False  # Default should remain
-    
-    def test_state_reset_simulation(self):
-        """Test state can be reset to initial conditions"""
-        # Create fully populated state
-        state = LangGraphState(
-            domain="retail",
-            schema={"product": ColumnInfo(dtype="string", sample_values=["A"])},
-            rules=["Rule 1"],
-            query_embedding=[0.1],
-            results=[{"test": "value"}],
-            filtered_columns=[{"col": "info"}],
-            pii_only=True,
-            allowed_types=["string"],
-            csv_ready=True
-        )
-        
-        # Reset to minimal state
-        state.schema = None
-        state.rules = None
-        state.query_embedding = None
-        state.results = None
-        state.filtered_columns = None
-        state.pii_only = False
-        state.allowed_types = ["string", "integer", "date"]
-        state.csv_ready = False
-        
-        # Verify reset state
-        assert state.domain == "retail"  # Domain should remain
-        assert state.schema is None
-        assert state.rules is None
-        assert state.query_embedding is None
-        assert state.results is None
-        assert state.filtered_columns is None
-        assert state.pii_only is False
-        assert state.allowed_types == ["string", "integer", "date"]
-        assert state.csv_ready is False
-
-
-class TestEdgeCases:
-    """Test edge cases and error conditions"""
-    
-    def test_column_info_very_long_sample_values(self):
-        """Test ColumnInfo with very long sample values list"""
-        long_samples = [f"value_{i}" for i in range(1000)]
-        
-        column = ColumnInfo(
-            dtype="string",
-            sample_values=long_samples
-        )
-        
-        assert len(column.sample_values) == 1000
-        assert column.sample_values[0] == "value_0"
-        assert column.sample_values[-1] == "value_999"
-    
-    def test_langraph_state_very_long_embedding(self):
-        """Test LangGraphState with very long embedding vector"""
-        long_embedding = [float(i) for i in range(1536)]  # Common embedding size
-        
-        state = LangGraphState(
-            domain="test",
-            query_embedding=long_embedding
-        )
-        
-        assert len(state.query_embedding) == 1536
-        assert state.query_embedding[0] == 0.0
-        assert state.query_embedding[-1] == 1535.0
-    
-    def test_langraph_state_empty_allowed_types(self):
-        """Test LangGraphState with empty allowed_types"""
-        state = LangGraphState(
-            domain="test",
-            allowed_types=[]
-        )
-        
-        assert state.allowed_types == []
-    
-    def test_column_info_unicode_samples(self):
-        """Test ColumnInfo with unicode sample values"""
-        unicode_samples = ["测试", "тест", "🚀", "café"]
-        
-        column = ColumnInfo(
-            dtype="string",
-            sample_values=unicode_samples
-        )
-        
-        assert column.sample_values == unicode_samples
-        assert "测试" in column.sample_values
-        assert "🚀" in column.sample_values
+        assert len(state.step_history) == 1
+        assert len(state.thoughts) == 1
+        assert len(state.rule_suggestions) == 2
+        assert state.plan.goal == "Generate validation rules for financial data"
 
 
 if __name__ == "__main__":
