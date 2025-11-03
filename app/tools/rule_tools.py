@@ -390,10 +390,8 @@ def suggest_column_rules(data_schema: dict, gx_rules: list) -> str:
     results = []
     
     for data_type, group_columns in type_groups.items():
-        # Get rules applicable to this type
-        type_rules = [r for r in gx_rules if 
-                     data_type in r.get('applies_to', []) or 
-                     'all' in r.get('applies_to', [])]
+        # Pass all available rules to LLM - let LLM choose appropriate ones
+        type_rules = gx_rules  # Use all rules instead of filtering
         
         # Prepare focused schema for this group
         group_schema = {
@@ -415,15 +413,35 @@ def suggest_column_rules(data_schema: dict, gx_rules: list) -> str:
         column_info = [f"{col}({data_type})" for col in group_columns]
         prompt = get_enhanced_rule_prompt(domain, group_schema, type_rules)
 
-        # Minimal, strict output instruction to reduce tokens
-        prompt += (
-            f"\nColumns: {', '.join(column_info)}\n"
-            "Respond ONLY with a minified JSON array as specified. No prose, no markdown."
-        )
+        # Enhanced specific instruction for column-appropriate rule selection
+        enhanced_instruction = f"""
+
+CRITICAL INSTRUCTIONS:
+1. Analyze each column name to understand its business purpose
+2. Choose DIFFERENT, appropriate rules for each column based on its name and purpose
+3. Use the format: {{"rule_name": "<rule_name>", "column_name": "<column>", "value": <appropriate_value>}}
+
+COLUMN-SPECIFIC GUIDANCE:
+- GENDER: Use ExpectColumnValuesToBeInSet with gender values
+- EMAIL: Use ExpectColumnValuesToBeValidEmail or regex for email format  
+- PHONE: Use ExpectColumnValuesToMatchRegex for phone pattern
+- AGE: Use ExpectColumnValuesToBeBetween with reasonable age range
+- ID columns: Use ExpectColumnValuesToBeUnique
+- DATE columns: Use ExpectColumnValuesToBeDateutilParseable
+- ADDRESS: Use ExpectColumnValueLengthsToBeBetween for reasonable address length
+
+DO NOT use the same rule for all columns! Each column should get appropriate, specific rules.
+
+Columns to process: {', '.join(column_info)}
+Domain: {domain}
+
+Respond ONLY with a valid JSON array. No prose, no markdown."""
+        
+        final_prompt = prompt + enhanced_instruction
         
         try:
             # Make single LLM call for all columns of this type
-            result = _process_llm_request(llm, prompt)
+            result = _process_llm_request(llm, final_prompt)
             
             if result and result != "[]":
                 results.append(result)
@@ -444,13 +462,13 @@ def suggest_column_rules(data_schema: dict, gx_rules: list) -> str:
 
     # Combine all results
     if not results:
-        # Global fallback
+        # Global fallback using approved rules
         fallbacks = []
         for col in columns:
             fallbacks.append({
                 "column": col,
                 "expectations": [
-                    {"expectation_type": "expect_column_values_to_not_be_null"}
+                    {"expectation_type": "expect_column_values_to_be_unique"}
                 ]
             })
         return json.dumps(fallbacks)
@@ -463,27 +481,26 @@ def suggest_column_rules(data_schema: dict, gx_rules: list) -> str:
     return combined
         
 def generate_type_specific_fallback(column: str, data_type: str) -> dict:
-    """Generate type-specific fallback rules for a column"""
-    rules = [{"expectation_type": "expect_column_values_to_not_be_null"}]
+    """Generate type-specific fallback rules for a column using only approved rules"""
     
     if data_type in ['number', 'integer', 'float']:
-        rules.extend([
+        rules = [
             {
-                "expectation_type": "expect_column_values_to_be_in_type_list",
-                "kwargs": {"type_list": ["number"]},
+                "expectation_type": "expect_column_values_to_be_of_type",
+                "kwargs": {"type_": "INTEGER"},
                 "meta": {"reasoning": "Ensure numeric data type consistency"}
             },
             {
-                "expectation_type": "expect_column_values_to_be_in_range",
-                "kwargs": {"min_value": None, "max_value": None},
-                "meta": {"reasoning": "Validate numeric range"}
+                "expectation_type": "expect_column_values_to_be_in_type_list",
+                "kwargs": {"type_list": ["number"]},
+                "meta": {"reasoning": "Ensure numeric data type"}
             }
-        ])
+        ]
     elif data_type in ['string', 'text']:
-        rules.extend([
+        rules = [
             {
                 "expectation_type": "expect_column_values_to_be_in_type_list",
-                "kwargs": {"type_list": ["string"]},
+                "kwargs": {"type_list": ["VARCHAR", "TEXT"]},
                 "meta": {"reasoning": "Ensure string data type consistency"}
             },
             {
@@ -491,9 +508,9 @@ def generate_type_specific_fallback(column: str, data_type: str) -> dict:
                 "kwargs": {"regex": "^.+$"},
                 "meta": {"reasoning": "Validate non-empty string content"}
             }
-        ])
+        ]
     elif data_type in ['date', 'datetime']:
-        rules.extend([
+        rules = [
             {
                 "expectation_type": "expect_column_values_to_be_dateutil_parseable",
                 "meta": {"reasoning": "Ensure valid date/time format"}
@@ -503,12 +520,11 @@ def generate_type_specific_fallback(column: str, data_type: str) -> dict:
                 "kwargs": {"type_list": ["datetime", "string"]},
                 "meta": {"reasoning": "Allow both datetime and string representations"}
             }
-        ])
+        ]
     elif data_type in ['boolean']:
-        rules.extend([
+        rules = [
             {
-                "expectation_type": "expect_column_values_to_be_in_type_list",
-                "kwargs": {"type_list": ["boolean"]},
+                "expectation_type": "expect_column_values_to_be_boolean",
                 "meta": {"reasoning": "Ensure boolean data type"}
             },
             {
@@ -516,22 +532,30 @@ def generate_type_specific_fallback(column: str, data_type: str) -> dict:
                 "kwargs": {"value_set": [True, False]},
                 "meta": {"reasoning": "Validate boolean values"}
             }
-        ])
+        ]
     elif data_type in ['array', 'list']:
-        rules.extend([
+        rules = [
             {
                 "expectation_type": "expect_column_values_to_be_in_type_list",
                 "kwargs": {"type_list": ["array"]},
                 "meta": {"reasoning": "Ensure array data type"}
             }
-        ])
+        ]
     elif data_type in ['object', 'json']:
-        rules.extend([
+        rules = [
             {
                 "expectation_type": "expect_column_values_to_be_json_parseable",
                 "meta": {"reasoning": "Validate JSON structure"}
             }
-        ])
+        ]
+    else:
+        # Default fallback - use unique constraint for unknown types
+        rules = [
+            {
+                "expectation_type": "expect_column_values_to_be_unique",
+                "meta": {"reasoning": "Ensure column uniqueness"}
+            }
+        ]
         
     return {
         "column": column,

@@ -23,21 +23,18 @@ Suggest up to 3 lightweight Great Expectations rules per column in the schema. P
 DO:
 - Use only columns present in the schema.
 - Keep meta.reasoning short and concrete (<=80 chars).
-- Prefer null checks, type checks, uniqueness for ID-like columns, and simple regex only when clearly implied.
+- Prefer type checks, uniqueness for ID-like columns, and simple regex only when clearly implied.
 
 DON'T:
 - Guess numeric ranges or patterns when not supported by history; omit instead.
 - Duplicate or contradict existing rules.
 
 ALLOWED expectation_type values:
-- expect_column_values_to_not_be_null
-- expect_column_values_to_be_of_type
-- expect_column_values_to_be_unique
-- expect_column_values_to_be_between
-- expect_column_values_to_match_regex
+Use ONLY the rule names provided in the "existing rules" context above. 
+DO NOT use any rule names not explicitly listed in the available rules.
 
 Example (format only):
-[{"column":"customer_id","expectations":[{"expectation_type":"expect_column_values_to_not_be_null","kwargs":{},"meta":{"reasoning":"IDs must exist"}},{"expectation_type":"expect_column_values_to_be_unique","kwargs":{},"meta":{"reasoning":"IDs should be unique"}}]}]
+[{"column":"customer_id","expectations":[{"expectation_type":"expect_column_values_to_be_unique","kwargs":{},"meta":{"reasoning":"IDs should be unique"}},{"expectation_type":"expect_column_values_to_be_of_type","kwargs":{"type_":"INTEGER"},"meta":{"reasoning":"IDs must be integers"}}]}]
 """
 
 DOMAIN_EXTENSION_PROMPT = """You are a Data Integration Specialist with expertise in schema evolution and domain expansion.Return ONLY a JSON object with this exact structure. No prose. No markdown.

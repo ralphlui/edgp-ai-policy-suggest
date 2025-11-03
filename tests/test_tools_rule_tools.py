@@ -383,33 +383,33 @@ class TestRuleToolsModule:
         result = generate_type_specific_fallback("test_num", "number")
         assert isinstance(result, dict)
         assert result["column"] == "test_num"
-        assert len(result["expectations"]) >= 2  # Should have not_null and type rules at minimum
+        assert len(result["expectations"]) >= 1  # Should have at least one rule
         
         # Test string type
         result = generate_type_specific_fallback("test_str", "string")
         assert isinstance(result, dict)
         assert result["column"] == "test_str"
-        assert len(result["expectations"]) >= 2
+        assert len(result["expectations"]) >= 1
         
         # Test date type
         result = generate_type_specific_fallback("test_date", "date")
         assert isinstance(result, dict)
         assert result["column"] == "test_date"
-        assert len(result["expectations"]) >= 2
+        assert len(result["expectations"]) >= 1
         
         # Test boolean type
         result = generate_type_specific_fallback("test_bool", "boolean")
         assert isinstance(result, dict)
         assert result["column"] == "test_bool"
-        assert len(result["expectations"]) >= 2
+        assert len(result["expectations"]) >= 1
         
-        # Test array type
+        # Test array type (should use default fallback)
         result = generate_type_specific_fallback("test_array", "array")
         assert isinstance(result, dict)
         assert result["column"] == "test_array"
         assert len(result["expectations"]) >= 1
         
-        # Test json type
+        # Test json type (should use default fallback)
         result = generate_type_specific_fallback("test_json", "json")
         assert isinstance(result, dict)
         assert result["column"] == "test_json"
@@ -447,12 +447,12 @@ class TestRuleToolsModule:
             }
         }
         
-        # Create test rules for each type
+        # Create test rules using approved rules from the default list
         rules = [
-            {"rule_name": "expect_column_values_to_not_be_null", "applies_to": ["all"]},
-            {"rule_name": "expect_column_values_to_be_dateutil_parseable", "applies_to": ["date"]},
-            {"rule_name": "expect_column_values_to_be_in_type_list", "applies_to": ["number", "string", "boolean"]},
-            {"rule_name": "expect_column_values_to_be_in_range", "applies_to": ["number"]}
+            {"rule_name": "ExpectColumnValuesToBeUnique", "column_name": "id", "value": None},
+            {"rule_name": "ExpectColumnValuesToBeDateutilParseable", "column_name": "event_time", "value": None},
+            {"rule_name": "ExpectColumnValuesToBeInTypeList", "column_name": "comment", "value": {"type_list": ["VARCHAR", "TEXT"]}},
+            {"rule_name": "ExpectColumnValuesToBeOfType", "column_name": "count", "value": {"type_": "INTEGER"}}
         ]
         
         # Mock LLM to return empty response to force type inference and fallback
@@ -480,20 +480,14 @@ class TestRuleToolsModule:
             elif rule_set["column"] == "STATUS_FLAG":
                 flag_rules = rule_set
         
-        # Verify ORDER_DATE rules - Comprehensive date validation check
+        # Verify ORDER_DATE rules - Should infer as date type and get appropriate rules
         assert date_rules is not None, "ORDER_DATE rules not found"
         date_expectations = date_rules["expectations"]
         
-        # Should have at least 2 expectations: null check and date validation
-        assert len(date_expectations) >= 2, f"Expected 2+ date rules, got: {date_expectations}"
+        # Should have at least 1 expectation for date validation
+        assert len(date_expectations) >= 1, f"Expected 1+ date rules, got: {date_expectations}"
         
-        # Check for not null rule
-        assert any(
-            exp["expectation_type"] == "expect_column_values_to_not_be_null"
-            for exp in date_expectations
-        ), "Missing not null validation for ORDER_DATE"
-        
-        # Check for dateutil rule
+        # Check for dateutil rule (the main date validation rule we use)
         assert any(
             "dateutil" in exp["expectation_type"].lower()
             for exp in date_expectations
@@ -517,12 +511,15 @@ class TestRuleToolsModule:
         assert number_rules is not None, "CUSTOMER_NUMBER rules not found"
         num_expectations = number_rules["expectations"]
         
-        # Should have number type validation
-        assert any(
-            exp["expectation_type"] == "expect_column_values_to_be_in_type_list" and
-            exp.get("kwargs", {}).get("type_list", []) == ["number"]
+        # Should have either integer type or number type rule
+        has_number_validation = any(
+            (exp["expectation_type"] == "expect_column_values_to_be_in_type_list" and
+             exp.get("kwargs", {}).get("type_list", []) == ["number"]) or
+            (exp["expectation_type"] == "expect_column_values_to_be_of_type" and
+             exp.get("kwargs", {}).get("type_") == "INTEGER")
             for exp in num_expectations
-        ), f"Missing number type validation for CUSTOMER_NUMBER. Rules: {num_expectations}"
+        )
+        assert has_number_validation, f"Missing number/integer type validation for CUSTOMER_NUMBER. Rules: {num_expectations}"
             
         # Verify STATUS_FLAG rules
         assert flag_rules is not None, "STATUS_FLAG rules not found"

@@ -42,12 +42,12 @@ def test_generate_type_specific_fallbacks_for_types():
     # number
     num = generate_type_specific_fallback("amount", "number")
     names = [e["expectation_type"] for e in num["expectations"]]
-    assert "expect_column_values_to_be_in_range" in names
-    assert any(e.get("kwargs", {}).get("type_list") == ["number"] for e in num["expectations"])
+    assert "expect_column_values_to_be_of_type" in names
+    assert any(e.get("kwargs", {}).get("type_") == "INTEGER" for e in num["expectations"])
 
     # string
     s = generate_type_specific_fallback("name", "string")
-    assert any(e.get("kwargs", {}).get("type_list") == ["string"] for e in s["expectations"])
+    assert any(e.get("kwargs", {}).get("type_list") == ["VARCHAR", "TEXT"] for e in s["expectations"])
     assert any(e.get("expectation_type") == "expect_column_values_to_match_regex" for e in s["expectations"])
 
     # date
