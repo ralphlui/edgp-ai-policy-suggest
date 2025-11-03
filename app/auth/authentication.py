@@ -165,11 +165,11 @@ class JWTTokenValidator:
                 }
             )
             
-            logger.debug(f"🔓 JWT token decoded successfully for user: {payload.get('userEmail', 'unknown')}")
+            logger.debug(f" JWT token decoded successfully for user: {payload.get('userEmail', 'unknown')}")
             return payload
             
         except jwt.ExpiredSignatureError:
-            logger.warning("⏰ JWT token has expired")
+            logger.warning(" JWT token has expired")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="JWT token is expired",
@@ -186,7 +186,7 @@ class JWTTokenValidator:
                 headers={"WWW-Authenticate": "Bearer"}
             )
         except jwt.MissingRequiredClaimError as e:
-            logger.warning(f"📋 JWT token missing required claim: {e}")
+            logger.warning(f" JWT token missing required claim: {e}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=f"JWT token missing required claim: {e}",

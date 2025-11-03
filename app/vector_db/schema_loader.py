@@ -4,20 +4,40 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Lazy initialization to prevent startup failures
+from app.aoss.column_store import OpenSearchColumnStore
+from app.core.config import settings
+import logging
+import threading
+
+logger = logging.getLogger(__name__)
+
+# Lazy initialization to prevent startup failures with thread safety
 _store = None
+_store_lock = threading.Lock()
 
 def get_store():
-    """Get OpenSearch store with lazy initialization"""
+    """Get OpenSearch store with lazy initialization and thread safety"""
     global _store
+    
+    # Double-checked locking pattern for thread safety
     if _store is None:
-        try:
-            _store = OpenSearchColumnStore(index_name=settings.opensearch_index)
-            logger.info(" Schema loader: OpenSearch store initialized")
-        except Exception as e:
-            logger.warning(f" Schema loader: Failed to initialize OpenSearch store: {e}")
-            return None
+        with _store_lock:
+            if _store is None:
+                try:
+                    _store = OpenSearchColumnStore(index_name=settings.opensearch_index)
+                    logger.info(" Schema loader: OpenSearch store initialized")
+                except Exception as e:
+                    logger.warning(f" Schema loader: Failed to initialize OpenSearch store: {e}")
+                    return None
     return _store
+
+def reset_store():
+    """Reset the store instance. Useful for testing or error recovery."""
+    global _store
+    with _store_lock:
+        if _store:
+            logger.info(" Resetting schema loader store")
+        _store = None
 
 def get_schema_by_domain(domain: str) -> dict:
     """
@@ -29,6 +49,9 @@ def get_schema_by_domain(domain: str) -> dict:
         return {}
     
     try:
+        # Log that we're reusing existing connection
+        logger.debug(f" Reusing OpenSearch connection for domain: {domain}")
+        
         # Use the new direct domain search method instead of semantic search
         results = store.get_columns_by_domain(
             domain=domain,

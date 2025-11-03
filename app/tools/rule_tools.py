@@ -12,6 +12,78 @@ import os
 
 logger = logging.getLogger(__name__)
 
+def _normalize_rule_name(rule_name: str) -> str:
+    """
+    Normalize rule names to consistent PascalCase format.
+    Handles various input formats and ensures proper capitalization.
+    
+    Examples:
+    - expect_column_values_to_be_unique -> ExpectColumnValuesToBeUnique
+    - ExpectColumnValuesToBeUnique -> ExpectColumnValuesToBeUnique  
+    - expect_column_values_to_be_in_type_list -> ExpectColumnValuesToBeInTypeList
+    - expectexpectcolumnvaluestobeunique -> ExpectColumnValuesToBeUnique
+    """
+    if not rule_name:
+        return ""
+    
+    # Convert to lowercase first to handle any mixed case issues
+    normalized = rule_name.lower()
+    
+    # Remove any duplicate "expect" prefixes that might occur
+    while normalized.startswith("expect"):
+        normalized = normalized[6:]  # Remove "expect"
+        if normalized.startswith("_"):
+            normalized = normalized[1:]  # Remove underscore after expect
+    
+    # Clean up any remaining underscores or handle already combined words
+    if "_" in normalized:
+        # Standard snake_case processing
+        words = normalized.split("_")
+    else:
+        # Handle cases where words are already combined without underscores
+        # Split on common boundaries like "columnvalues", "tobe", etc.
+        word = normalized
+        # Apply word boundary patterns for common rule name components
+        word = re.sub(r'(column)(values)', r'\1_\2', word)
+        word = re.sub(r'(values)(to)', r'\1_\2', word)  
+        word = re.sub(r'(to)(be)', r'\1_\2', word)
+        word = re.sub(r'(be)(in)', r'\1_\2', word)
+        word = re.sub(r'(in)(set)', r'\1_\2', word)
+        word = re.sub(r'(in)(type)', r'\1_\2', word)
+        word = re.sub(r'(type)(list)', r'\1_\2', word)
+        word = re.sub(r'(be)(unique)', r'\1_\2', word)
+        word = re.sub(r'(be)(between)', r'\1_\2', word)
+        word = re.sub(r'(be)(greater)', r'\1_\2', word)
+        word = re.sub(r'(be)(less)', r'\1_\2', word)
+        word = re.sub(r'(be)(positive)', r'\1_\2', word)
+        word = re.sub(r'(be)(negative)', r'\1_\2', word)
+        word = re.sub(r'(be)(null)', r'\1_\2', word)
+        word = re.sub(r'(be)(none)', r'\1_\2', word)
+        word = re.sub(r'(match)(regex)', r'\1_\2', word)
+        word = re.sub(r'(match)(like)', r'\1_\2', word)
+        words = word.split("_")
+    
+    # Filter out empty words and capitalize
+    capitalized_words = [word.capitalize() for word in words if word]
+    
+    # Handle specific known words that need special capitalization
+    result_words = []
+    for word in capitalized_words:
+        if word.lower() == "id":
+            result_words.append("Id")
+        elif word.lower() == "url":
+            result_words.append("Url")
+        elif word.lower() == "api":
+            result_words.append("Api")
+        elif word.lower() == "json":
+            result_words.append("Json")
+        elif word.lower() == "uuid":
+            result_words.append("Uuid")
+        else:
+            result_words.append(word)
+    
+    return f"Expect{''.join(result_words)}"
+
 @tool
 def fetch_gx_rules(query: str = "") -> list:
     """Fetch GX rules from Rule Microservice."""
@@ -832,11 +904,8 @@ def convert_to_rule_ms_format(rule_input: dict) -> list:
             kwargs = rule.get("kwargs", {})
             meta = rule.get("meta", {})
 
-            # Convert rule name to proper format
-            gx_rule_name = "".join(
-                word.capitalize() for word in rule_name.replace("expect_", "").split("_")
-            )
-            gx_rule_name = f"Expect{gx_rule_name}"
+            # Convert rule name to proper PascalCase format
+            gx_rule_name = _normalize_rule_name(rule_name)
 
             # Prepare rule value based on rule type
             rule_value = None

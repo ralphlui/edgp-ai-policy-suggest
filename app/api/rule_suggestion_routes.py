@@ -184,7 +184,10 @@ async def suggest_rules(
                             log_domain_operation("Schema found after refresh", domain)
             
             vector_db_status = "connected"
-            log_domain_operation("Vector DB connection successful", domain)
+            if schema:
+                log_domain_operation("Schema retrieved successfully", domain, f"{len(schema)} columns found")
+            else:
+                log_domain_operation("Schema retrieved successfully", domain, "no columns found")
         except Exception as db_error:
             connection_error = str(db_error)
             schema = None

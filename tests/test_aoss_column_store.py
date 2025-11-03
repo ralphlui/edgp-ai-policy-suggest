@@ -78,20 +78,20 @@ class TestColumnDoc:
 class TestOpenSearchColumnStore:
     """Test the OpenSearchColumnStore class"""
     
-    @patch('app.aoss.column_store.create_aoss_client')
-    def test_initialization_success(self, mock_client_factory):
-        """Test successful initialization"""
+    @patch('app.aoss.column_store.get_shared_aoss_client')
+    def test_initialization_success(self, mock_get_shared_client):
+        """Test successful OpenSearchColumnStore initialization"""
         mock_client = Mock()
-        mock_client_factory.return_value = mock_client
+        mock_get_shared_client.return_value = mock_client
         
         store = OpenSearchColumnStore(index_name="test-index", embedding_dim=768)
         
         assert store.index_name == "test-index"
         assert store.embedding_dim == 768
         assert store.client == mock_client
-        mock_client_factory.assert_called_once()
+        mock_get_shared_client.assert_called_once()
         
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_initialization_with_custom_client(self, mock_client_factory):
         """Test initialization with custom client"""
         custom_client = Mock()
@@ -107,7 +107,7 @@ class TestOpenSearchColumnStore:
         assert store.embedding_dim == 512
         mock_client_factory.assert_not_called()
         
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_initialization_failure(self, mock_client_factory):
         """Test initialization failure"""
         mock_client_factory.side_effect = Exception("Connection failed")
@@ -115,7 +115,7 @@ class TestOpenSearchColumnStore:
         with pytest.raises(Exception, match="Connection failed"):
             OpenSearchColumnStore(index_name="test-index")
     
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_ensure_index_exists(self, mock_client_factory):
         """Test ensure_index when index already exists"""
         mock_client = Mock()
@@ -128,7 +128,7 @@ class TestOpenSearchColumnStore:
         mock_client.indices.exists.assert_called_once_with(index="existing-index")
         mock_client.indices.create.assert_not_called()
         
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_ensure_index_creates_new(self, mock_client_factory):
         """Test ensure_index creates new index"""
         mock_client = Mock()
@@ -149,7 +149,7 @@ class TestOpenSearchColumnStore:
         body = call_args[1]["body"]
         assert body["mappings"]["properties"]["embedding"]["dimension"] == 384
         
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_ensure_index_authorization_error(self, mock_client_factory):
         """Test ensure_index with authorization error"""
         mock_client = Mock()
@@ -163,7 +163,7 @@ class TestOpenSearchColumnStore:
         with pytest.raises(Exception):  # Don't match specific text due to retry wrapper
             store.ensure_index()
             
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_ensure_index_already_exists_error(self, mock_client_factory):
         """Test ensure_index with ResourceAlreadyExistsException (race condition)"""
         mock_client = Mock()
@@ -176,7 +176,7 @@ class TestOpenSearchColumnStore:
         # Should not raise exception (race condition is OK)
         store.ensure_index()
         
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_upsert_columns_empty_docs(self, mock_client_factory):
         """Test upsert_columns with empty document list"""
         mock_client = Mock()
@@ -187,7 +187,7 @@ class TestOpenSearchColumnStore:
         # Should not raise exception with empty list
         store.upsert_columns([])
         
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     @patch('opensearchpy.helpers.bulk')
     def test_upsert_columns_success(self, mock_bulk, mock_client_factory):
         """Test successful upsert_columns"""
@@ -225,7 +225,7 @@ class TestOpenSearchColumnStore:
         assert actions[0]["_index"] == "test-index"
         assert actions[0]["_op_type"] == "index"
         
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_upsert_columns_wrong_embedding_dimension(self, mock_client_factory):
         """Test upsert_columns with wrong embedding dimensions"""
         mock_client = Mock()
@@ -247,7 +247,7 @@ class TestOpenSearchColumnStore:
         with pytest.raises(Exception):  # Will be wrapped in RetryError due to @retry decorator
             store.upsert_columns(docs)
             
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     @patch('opensearchpy.helpers.bulk')
     def test_upsert_columns_bulk_failures(self, mock_bulk, mock_client_factory):
         """Test upsert_columns with some bulk failures"""
@@ -274,7 +274,7 @@ class TestOpenSearchColumnStore:
         # Should not raise exception, just log warnings
         store.upsert_columns(docs)
         
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     @patch('opensearchpy.helpers.bulk')
     def test_upsert_columns_bulk_exception(self, mock_bulk, mock_client_factory):
         """Test upsert_columns with bulk operation exception"""
@@ -301,7 +301,7 @@ class TestOpenSearchColumnStore:
         with pytest.raises(Exception):
             store.upsert_columns(docs)
             
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_semantic_search_basic(self, mock_client_factory):
         """Test basic semantic search functionality"""
         mock_client = Mock()
@@ -351,7 +351,7 @@ class TestOpenSearchColumnStore:
         assert search_args["index"] == "test-index"
         assert "body" in search_args
         
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_semantic_search_with_filters(self, mock_client_factory):
         """Test semantic search with domain and other filters"""
         mock_client = Mock()
@@ -388,7 +388,7 @@ class TestOpenSearchColumnStore:
         pii_filter = next(f for f in filter_clause if "metadata.pii" in str(f))
         assert pii_filter == {"term": {"metadata.pii": True}}
         
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_get_columns_by_domain(self, mock_client_factory):
         """Test get_columns_by_domain method"""
         mock_client = Mock()
@@ -423,7 +423,7 @@ class TestOpenSearchColumnStore:
         query = search_args["body"]["query"]
         assert query["term"]["metadata.domain"] == "customer"
         
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_get_columns_by_domain_error(self, mock_client_factory):
         """Test get_columns_by_domain with search error"""
         mock_client = Mock()
@@ -436,7 +436,7 @@ class TestOpenSearchColumnStore:
         
         assert results == []  # Should return empty list on error
         
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_check_domain_exists_case_insensitive_found(self, mock_client_factory):
         """Test check_domain_exists_case_insensitive when domain exists"""
         mock_client = Mock()
@@ -454,7 +454,7 @@ class TestOpenSearchColumnStore:
             assert result["existing_domain"] == "Customer"
             assert result["requested_domain"] == "customer"
             
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_check_domain_exists_case_insensitive_not_found(self, mock_client_factory):
         """Test check_domain_exists_case_insensitive when domain doesn't exist"""
         mock_client = Mock()
@@ -471,7 +471,7 @@ class TestOpenSearchColumnStore:
             assert result["exists"] is False
             assert result["existing_domain"] is None
             
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_check_domain_exists_index_not_exists(self, mock_client_factory):
         """Test check_domain_exists_case_insensitive when index doesn't exist"""
         mock_client = Mock()
@@ -485,7 +485,7 @@ class TestOpenSearchColumnStore:
         assert result["exists"] is False
         assert result["existing_domain"] is None
         
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_check_domain_exists_error(self, mock_client_factory):
         """Test check_domain_exists_case_insensitive with error"""
         mock_client = Mock()
@@ -499,7 +499,7 @@ class TestOpenSearchColumnStore:
         assert result["exists"] is False
         assert result["existing_domain"] is None
         
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_force_refresh_index_success(self, mock_client_factory):
         """Test successful force_refresh_index"""
         mock_client = Mock()
@@ -514,7 +514,7 @@ class TestOpenSearchColumnStore:
         assert result is True
         mock_client.indices.refresh.assert_called_once_with(index="test-index")
         
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_force_refresh_index_not_supported(self, mock_client_factory):
         """Test force_refresh_index when refresh is not supported (OpenSearch Serverless)"""
         mock_client = Mock()
@@ -528,7 +528,7 @@ class TestOpenSearchColumnStore:
         
         assert result is False
         
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_force_refresh_index_not_exists(self, mock_client_factory):
         """Test force_refresh_index when index doesn't exist"""
         mock_client = Mock()
@@ -542,7 +542,7 @@ class TestOpenSearchColumnStore:
         assert result is False
         mock_client.indices.refresh.assert_not_called()
         
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_get_all_domains_success(self, mock_client_factory):
         """Test successful get_all_domains"""
         mock_client = Mock()
@@ -573,7 +573,7 @@ class TestOpenSearchColumnStore:
         assert search_args["body"]["size"] == 0
         assert "unique_domains" in search_args["body"]["aggs"]
         
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_get_all_domains_index_not_exists(self, mock_client_factory):
         """Test get_all_domains when index doesn't exist"""
         mock_client = Mock()
@@ -587,7 +587,7 @@ class TestOpenSearchColumnStore:
         assert domains == []
         mock_client.search.assert_not_called()
         
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_get_all_domains_error(self, mock_client_factory):
         """Test get_all_domains with search error"""
         mock_client = Mock()
@@ -601,7 +601,7 @@ class TestOpenSearchColumnStore:
         
         assert domains == []
         
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_get_all_domains_realtime_with_refresh(self, mock_client_factory):
         """Test get_all_domains_realtime with force refresh"""
         mock_client = Mock()
@@ -620,7 +620,7 @@ class TestOpenSearchColumnStore:
             mock_get_domains.assert_called_once()
             assert result == ["customer", "product"]
             
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_get_all_domains_realtime_without_refresh(self, mock_client_factory):
         """Test get_all_domains_realtime without force refresh"""
         mock_client = Mock()
@@ -639,7 +639,7 @@ class TestOpenSearchColumnStore:
             mock_get_domains.assert_called_once()
             assert result == ["customer"]
             
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_get_all_domains_realtime_error_fallback(self, mock_client_factory):
         """Test get_all_domains_realtime error handling with fallback"""
         mock_client = Mock()
@@ -710,7 +710,7 @@ class TestGlobalStoreFunction:
 class TestErrorHandlingAndEdgeCases:
     """Test various error scenarios and edge cases"""
     
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_upsert_timeout_error(self, mock_client_factory):
         """Test upsert with timeout error"""
         mock_client = Mock()
@@ -735,7 +735,7 @@ class TestErrorHandlingAndEdgeCases:
             with pytest.raises(Exception):
                 store.upsert_columns(docs)
                 
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_upsert_connection_error(self, mock_client_factory):
         """Test upsert with connection error"""
         mock_client = Mock()
@@ -760,7 +760,7 @@ class TestErrorHandlingAndEdgeCases:
             with pytest.raises(Exception):
                 store.upsert_columns(docs)
                 
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_semantic_search_empty_response(self, mock_client_factory):
         """Test semantic search with empty response"""
         mock_client = Mock()
@@ -773,7 +773,7 @@ class TestErrorHandlingAndEdgeCases:
         
         assert results == []
         
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_semantic_search_malformed_response(self, mock_client_factory):
         """Test semantic search with malformed response"""
         mock_client = Mock()
@@ -786,7 +786,7 @@ class TestErrorHandlingAndEdgeCases:
         
         assert results == []
         
-    @patch('app.aoss.column_store.create_aoss_client')
+    @patch('app.aoss.column_store.get_shared_aoss_client')
     def test_get_columns_by_domain_custom_fields(self, mock_client_factory):
         """Test get_columns_by_domain with custom return fields"""
         mock_client = Mock()

@@ -162,25 +162,25 @@ class TestAOSSClientModule:
         
         assert "credentials" in str(exc_info.value).lower()
 
-    @patch('app.aoss.aoss_client.create_aoss_client')
-    def test_test_aoss_connection_success(self, mock_create_client):
+    @patch('app.aoss.aoss_client.get_shared_aoss_client')
+    def test_test_aoss_connection_success(self, mock_get_client):
         """Test successful AOSS connection test"""
         mock_client = Mock()
         mock_client.info.return_value = {"cluster_name": "test"}
-        mock_create_client.return_value = mock_client
+        mock_get_client.return_value = mock_client
         
         from app.aoss.aoss_client import test_aoss_connection
         
         result = test_aoss_connection()
         
         assert result is True
-        mock_create_client.assert_called_once()
+        mock_get_client.assert_called_once()
         mock_client.info.assert_called_once()
 
-    @patch('app.aoss.aoss_client.create_aoss_client')
-    def test_test_aoss_connection_failure(self, mock_create_client):
+    @patch('app.aoss.aoss_client.get_shared_aoss_client')
+    def test_test_aoss_connection_failure(self, mock_get_client):
         """Test failed AOSS connection test"""
-        mock_create_client.side_effect = Exception("Connection failed")
+        mock_get_client.side_effect = Exception("Connection failed")
         
         from app.aoss.aoss_client import test_aoss_connection
         

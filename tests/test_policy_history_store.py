@@ -66,7 +66,7 @@ def sample_policy_doc():
 @pytest.mark.asyncio
 async def test_policy_history_store_initialization(mock_aoss_client):
     """Test PolicyHistoryStore initialization and index creation"""
-    with patch('app.aoss.policy_history_store.create_aoss_client', return_value=mock_aoss_client):
+    with patch('app.aoss.policy_history_store.get_shared_aoss_client', return_value=mock_aoss_client):
         store = PolicyHistoryStore(index_name="test-policy-index")
         
         # Verify index creation
@@ -95,7 +95,7 @@ async def test_store_policy(mock_aoss_client, sample_policy_doc):
     # Mock the index response
     mock_aoss_client.index.return_value = {'_id': 'generated-id-123'}
     
-    with patch('app.aoss.policy_history_store.create_aoss_client', return_value=mock_aoss_client):
+    with patch('app.aoss.policy_history_store.get_shared_aoss_client', return_value=mock_aoss_client):
         store = PolicyHistoryStore(index_name="test-policy-index")
         
         # Store the policy
@@ -150,7 +150,7 @@ async def test_retrieve_similar_policies(mock_aoss_client):
         }
     }
 
-    with patch('app.aoss.policy_history_store.create_aoss_client', return_value=mock_aoss_client):
+    with patch('app.aoss.policy_history_store.get_shared_aoss_client', return_value=mock_aoss_client):
         store = PolicyHistoryStore(index_name="test-policy-index")
         
         # Search for similar policies
@@ -195,7 +195,7 @@ async def test_get_domain_policies(mock_aoss_client):
         }
     }
 
-    with patch('app.aoss.policy_history_store.create_aoss_client', return_value=mock_aoss_client):
+    with patch('app.aoss.policy_history_store.get_shared_aoss_client', return_value=mock_aoss_client):
         store = PolicyHistoryStore(index_name="test-policy-index")
         
         # Get domain policies
@@ -230,7 +230,7 @@ async def test_update_policy_feedback(mock_aoss_client):
         }
     }
     
-    with patch('app.aoss.policy_history_store.create_aoss_client', return_value=mock_aoss_client):
+    with patch('app.aoss.policy_history_store.get_shared_aoss_client', return_value=mock_aoss_client):
         store = PolicyHistoryStore(index_name="test-policy-index")
         
         feedback = {
@@ -261,7 +261,7 @@ async def test_error_handling(mock_aoss_client):
     """Test error handling in PolicyHistoryStore"""
     mock_aoss_client.indices.create.side_effect = Exception("Failed to create index")
     
-    with patch('app.aoss.policy_history_store.create_aoss_client', return_value=mock_aoss_client):
+    with patch('app.aoss.policy_history_store.get_shared_aoss_client', return_value=mock_aoss_client):
         with pytest.raises(Exception) as exc_info:
             store = PolicyHistoryStore(index_name="test-policy-index")
         assert "Failed to create index" in str(exc_info.value)
@@ -274,7 +274,7 @@ async def test_retrieve_similar_policies_exception_returns_empty():
     bad_client.search.side_effect = Exception("boom")
     bad_client.indices.exists.return_value = True
 
-    with patch('app.aoss.policy_history_store.create_aoss_client', return_value=bad_client):
+    with patch('app.aoss.policy_history_store.get_shared_aoss_client', return_value=bad_client):
         store = PolicyHistoryStore(index_name="t")
         results = await store.retrieve_similar_policies([0.0] * 1536, domain="x", min_success_rate=0.5, top_k=2)
         assert results == []
@@ -287,7 +287,7 @@ async def test_update_policy_feedback_not_found_raises():
     client.indices.exists.return_value = True
     client.search.return_value = {"hits": {"total": {"value": 0}, "hits": []}}
 
-    with patch('app.aoss.policy_history_store.create_aoss_client', return_value=client):
+    with patch('app.aoss.policy_history_store.get_shared_aoss_client', return_value=client):
         store = PolicyHistoryStore(index_name="t")
         with pytest.raises(ValueError):
             await store.update_policy_feedback("unknown", {"ok": True})

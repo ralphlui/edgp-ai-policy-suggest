@@ -8,7 +8,7 @@ from typing import Dict, List, Any, Optional
 import json
 from opensearchpy import OpenSearch
 from app.core.config import settings
-from app.aoss.aoss_client import create_aoss_client
+from app.aoss.aoss_client import get_shared_aoss_client
 from app.embedding.embedder import embed_column_names_batched_async
 import logging
 
@@ -56,7 +56,7 @@ class PolicyHistoryDoc:
 class PolicyHistoryStore:
     def __init__(self, index_name: str = "edgp-policy-history"):
         self.index_name = index_name
-        self.client = create_aoss_client()
+        self.client = get_shared_aoss_client()
         self.embedding_dim = settings.embed_dim
         self._ensure_index()
 

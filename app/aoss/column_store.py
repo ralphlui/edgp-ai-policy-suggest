@@ -3,8 +3,9 @@ from dataclasses import dataclass
 from opensearchpy import OpenSearch, helpers
 from tenacity import retry, stop_after_attempt, wait_exponential_jitter
 import logging
+import threading
 
-from app.aoss.aoss_client import create_aoss_client
+from app.aoss.aoss_client import get_shared_aoss_client
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ class OpenSearchColumnStore:
         self.embedding_dim = embedding_dim
         
         try:
-            self.client = client or create_aoss_client()
+            self.client = client or get_shared_aoss_client()
             logger.info(f" OpenSearchColumnStore initialized with index: {index_name}")
         except Exception as e:
             logger.error(f" Failed to initialize OpenSearchColumnStore: {e}")
@@ -397,18 +398,31 @@ class OpenSearchColumnStore:
 
 # Global store instance for backward compatibility with tests
 _store_instance = None
+_store_lock = threading.Lock()
 
 def get_store(index_name: str = "edgp-column-metadata") -> Optional[OpenSearchColumnStore]:
     """
-    Get or create a global OpenSearchColumnStore instance.
+    Get or create a global OpenSearchColumnStore instance with thread safety.
     This function exists for backward compatibility with existing tests.
     """
     global _store_instance
+    
+    # Double-checked locking pattern for thread safety
     if _store_instance is None:
-        try:
-            _store_instance = OpenSearchColumnStore(index_name=index_name)
-            logger.info(f"Created global column store instance with index: {index_name}")
-        except Exception as e:
-            logger.error(f"Failed to create global column store: {e}")
-            return None
+        with _store_lock:
+            if _store_instance is None:
+                try:
+                    _store_instance = OpenSearchColumnStore(index_name=index_name)
+                    logger.info(f"✅ Created global column store instance with index: {index_name}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to create global column store: {e}")
+                    return None
     return _store_instance
+
+def reset_global_store():
+    """Reset the global store instance. Useful for testing or error recovery."""
+    global _store_instance
+    with _store_lock:
+        if _store_instance:
+            logger.info("🔄 Resetting global column store instance")
+        _store_instance = None

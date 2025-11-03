@@ -3,10 +3,15 @@ import os
 import boto3
 from opensearchpy import OpenSearch, RequestsHttpConnection, AWSV4SignerAuth
 import logging
+import threading
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Global client instance and lock for thread safety
+_client_instance = None
+_client_lock = threading.Lock()
 
 def create_aoss_client(timeout_sec: int = 30) -> OpenSearch:
     """
@@ -41,7 +46,7 @@ def create_aoss_client(timeout_sec: int = 30) -> OpenSearch:
         # Create modern AWSV4SignerAuth
         awsauth = AWSV4SignerAuth(credentials, settings.aws_region, 'aoss')
         
-        # Create OpenSearch client
+        # Create OpenSearch client with connection pooling
         client = OpenSearch(
             hosts=[{"host": settings.aoss_host, "port": 443}],
             http_auth=awsauth,
@@ -51,6 +56,8 @@ def create_aoss_client(timeout_sec: int = 30) -> OpenSearch:
             timeout=timeout_sec,
             max_retries=3,
             retry_on_timeout=True,
+            # Connection pooling settings
+            maxsize=20,  # Maximum number of connections in the pool
             # Additional headers for better debugging
             headers={"Content-Type": "application/json"}
         )
@@ -92,13 +99,40 @@ def create_aoss_client(timeout_sec: int = 30) -> OpenSearch:
         
         raise
 
+def get_shared_aoss_client() -> OpenSearch:
+    """
+    Get a shared OpenSearch client instance (singleton pattern).
+    This prevents creating new connections on every API call.
+    """
+    global _client_instance
+    
+    # Double-checked locking pattern for thread safety
+    if _client_instance is None:
+        with _client_lock:
+            if _client_instance is None:
+                logger.info(" Creating shared AOSS client instance...")
+                _client_instance = create_aoss_client()
+                logger.info(" Shared AOSS client created and cached")
+    
+    return _client_instance
+
+def reset_shared_client():
+    """
+    Reset the shared client instance. Useful for testing or error recovery.
+    """
+    global _client_instance
+    with _client_lock:
+        if _client_instance:
+            logger.info("🔄 Resetting shared AOSS client")
+        _client_instance = None
+
 def test_aoss_connection() -> bool:
     """
     Test AOSS connection and return True if successful.
     Useful for health checks and debugging.
     """
     try:
-        client = create_aoss_client()
+        client = get_shared_aoss_client()
         client.info()
         return True
     except Exception as e:
