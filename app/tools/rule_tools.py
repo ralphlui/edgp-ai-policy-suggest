@@ -165,7 +165,7 @@ def _get_default_rules() -> list:
             "rule_name": "ExpectColumnValuesToBeInTypeList",
             "column_name": "comment",
             "value": {
-                "type_list": ["VARCHAR", "TEXT"]
+                "type_list": ["string"]
             }
         },
         {
@@ -500,7 +500,7 @@ def generate_type_specific_fallback(column: str, data_type: str) -> dict:
         rules = [
             {
                 "expectation_type": "expect_column_values_to_be_in_type_list",
-                "kwargs": {"type_list": ["VARCHAR", "TEXT"]},
+                "kwargs": {"type_list": ["string"]},
                 "meta": {"reasoning": "Ensure string data type consistency"}
             },
             {

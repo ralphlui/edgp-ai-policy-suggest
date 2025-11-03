@@ -47,7 +47,7 @@ def test_generate_type_specific_fallbacks_for_types():
 
     # string
     s = generate_type_specific_fallback("name", "string")
-    assert any(e.get("kwargs", {}).get("type_list") == ["VARCHAR", "TEXT"] for e in s["expectations"])
+    assert any(e.get("kwargs", {}).get("type_list") == ["string"] for e in s["expectations"])
     assert any(e.get("expectation_type") == "expect_column_values_to_match_regex" for e in s["expectations"])
 
     # date
