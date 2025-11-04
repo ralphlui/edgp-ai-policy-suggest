@@ -64,13 +64,31 @@ class LLMValidationMiddleware:
         Raises:
             ValidationError: If input is invalid and cannot be processed
         """
+        # Enhanced logging for complete observability
+        self.logger.info(f" Starting input validation for user {user_id}")
+        self.logger.debug(f" Input length: {len(user_input)} chars, context: {bool(context)}")
+        
         self.validation_metrics["total_requests"] += 1
         
         try:
+            # Log validation process start
+            self.logger.info(f" Running comprehensive input validation")
             result = self.validator.validate_llm_request(user_input, user_id, context)
+            
+            # Log validation results with detailed metrics
+            self.logger.info(f" Input validation completed - Valid: {result.is_valid}, "
+                           f"Confidence: {result.confidence_score:.2f}, Issues: {len(result.issues)}")
             
             if not result.is_valid:
                 self.validation_metrics["blocked_requests"] += 1
+                
+                # Enhanced logging for validation failures
+                self.logger.warning(f" Input validation BLOCKED for user {user_id}: "
+                                  f"{len(result.issues)} security issues detected")
+                
+                # Log specific issues for debugging
+                for issue in result.issues:
+                    self.logger.warning(f"    {issue.severity.value.upper()}: {issue.field} - {issue.message}")
                 
                 # Log validation failure
                 self.logger.warning(
@@ -104,7 +122,9 @@ class LLMValidationMiddleware:
             }
             
         except Exception as e:
-            self.logger.error(f"Error during input validation: {e}")
+            self.logger.error(f" Critical error during input validation for user {user_id}: {e}")
+            self.logger.debug(f" Validation metrics - Total: {self.validation_metrics['total_requests']}, "
+                            f"Blocked: {self.validation_metrics['blocked_requests']}")
             raise ValidationError(f"Validation failed: {str(e)}")
     
     def validate_output(self, llm_response: Union[str, Dict[str, Any]], 
@@ -121,17 +141,37 @@ class LLMValidationMiddleware:
         Returns:
             Dict containing validation result and filtered response
         """
+        # Enhanced logging for output validation
+        self.logger.info(f" Starting output validation for response_type: {response_type}")
+        self.logger.debug(f" Response size: {len(str(llm_response))} chars, has_schema: {bool(expected_schema)}")
+        
         try:
+            # Log validation process start
+            self.logger.info(f" Running comprehensive output validation")
             result = self.validator.validate_llm_response(
                 llm_response, response_type, expected_schema
             )
             
+            # Log validation results with detailed metrics
+            self.logger.info(f" Output validation completed - Valid: {result.is_valid}, "
+                           f"Confidence: {result.confidence_score:.2f}, Issues: {len(result.issues)}")
+            
             if not result.is_valid:
                 self.validation_metrics["filtered_responses"] += 1
+                
+                # Enhanced logging for output validation failures
+                self.logger.warning(f" Output validation FILTERED: {len(result.issues)} quality issues detected")
+                
+                # Log specific output issues
+                for issue in result.issues:
+                    self.logger.warning(f"    {issue.severity.value.upper()}: {issue.field} - {issue.message}")
                 
                 self.logger.warning(
                     f"Output validation found issues: {len(result.issues)} issues"
                 )
+            else:
+                # Log successful validation
+                self.logger.info(f" Output validation PASSED - Quality score: {result.confidence_score:.2f}")
             
             return {
                 "is_valid": result.is_valid,
@@ -152,7 +192,9 @@ class LLMValidationMiddleware:
             }
             
         except Exception as e:
-            self.logger.error(f"Error during output validation: {e}")
+            self.logger.error(f" Critical error during output validation: {e}")
+            self.logger.debug(f" Validation metrics - Total: {self.validation_metrics['total_requests']}, "
+                            f"Filtered: {self.validation_metrics['filtered_responses']}")
             return {
                 "is_valid": False,
                 "filtered_response": llm_response,
@@ -278,19 +320,59 @@ class AgentValidationContext:
         self.user_id = user_id
         self.middleware = LLMValidationMiddleware(config)
         self.validation_log = []
+        self.session_start = datetime.now(dt.timezone.utc)
+        self.logger = logging.getLogger(f"{__name__}.AgentValidationContext")
     
     def __enter__(self):
+        # Enhanced context entry logging
+        self.logger.info(f"🚀 Starting agent validation session for user {self.user_id}")
+        self.logger.debug(f"📅 Session started at: {self.session_start.isoformat()}")
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
-        # Log validation summary
-        if self.validation_log:
-            logger.info(f"Validation summary for user {self.user_id}: {len(self.validation_log)} validations performed")
+        # Enhanced context exit logging with session summary
+        session_duration = (datetime.now(dt.timezone.utc) - self.session_start).total_seconds()
+        
+        if exc_type:
+            self.logger.error(f"🔥 Validation session ended with exception: {exc_type.__name__}: {exc_val}")
+        
+        # Comprehensive session summary
+        total_validations = len(self.validation_log)
+        successful_validations = len([v for v in self.validation_log if v["valid"]])
+        input_validations = len([v for v in self.validation_log if v["type"] == "input"])
+        output_validations = len([v for v in self.validation_log if v["type"] == "output"])
+        
+        self.logger.info(f" VALIDATION SESSION SUMMARY for user {self.user_id}:")
+        self.logger.info(f"    Duration: {session_duration:.2f}s")
+        self.logger.info(f"    Total validations: {total_validations}")
+        self.logger.info(f"    Successful: {successful_validations}/{total_validations}")
+        self.logger.info(f"    Input validations: {input_validations}")
+        self.logger.info(f"    Output validations: {output_validations}")
+        
+        if total_validations > 0:
+            success_rate = (successful_validations / total_validations) * 100
+            self.logger.info(f"    Success rate: {success_rate:.1f}%")
     
     def validate_input(self, user_input: str, context: Optional[Dict[str, Any]] = None) -> str:
         """Validate input and return sanitized version"""
+        # Enhanced input validation logging
+        self.logger.info(f" [CONTEXT] Validating input for user {self.user_id}")
+        self.logger.debug(f" Input preview: {user_input[:100]}{'...' if len(user_input) > 100 else ''}")
+        
         result = self.middleware.validate_input(user_input, self.user_id, context)
-        self.validation_log.append({"type": "input", "valid": result["is_valid"]})
+        
+        # Log validation result in context
+        validation_entry = {
+            "type": "input",
+            "valid": result["is_valid"],
+            "confidence": result["confidence_score"],
+            "issues_count": len(result["issues"]),
+            "timestamp": datetime.now(dt.timezone.utc).isoformat()
+        }
+        self.validation_log.append(validation_entry)
+        
+        self.logger.info(f" [CONTEXT] Input validation result: valid={result['is_valid']}, "
+                        f"confidence={result['confidence_score']:.2f}, issues={len(result['issues'])}")
         
         if not result["is_valid"]:
             critical_issues = [
@@ -298,15 +380,38 @@ class AgentValidationContext:
                 if issue["severity"] == "critical"
             ]
             if critical_issues:
+                self.logger.error(f" [CONTEXT] Critical validation failure - blocking request")
                 raise ValidationError("Input validation failed")
+            else:
+                self.logger.warning(f" [CONTEXT] Non-critical issues found but allowing request to proceed")
         
         return result["sanitized_input"]
     
     def validate_output(self, llm_response: Union[str, Dict[str, Any]], 
                        response_type: str = "schema") -> Union[str, Dict[str, Any]]:
         """Validate output and return filtered version"""
+        # Enhanced output validation logging
+        self.logger.info(f" [CONTEXT] Validating output for user {self.user_id}, type: {response_type}")
+        self.logger.debug(f" Output size: {len(str(llm_response))} chars")
+        
         result = self.middleware.validate_output(llm_response, response_type)
-        self.validation_log.append({"type": "output", "valid": result["is_valid"]})
+        
+        # Log validation result in context
+        validation_entry = {
+            "type": "output",
+            "valid": result["is_valid"],
+            "confidence": result["confidence_score"],
+            "issues_count": len(result["issues"]),
+            "response_type": response_type,
+            "timestamp": datetime.now(dt.timezone.utc).isoformat()
+        }
+        self.validation_log.append(validation_entry)
+        
+        self.logger.info(f" [CONTEXT] Output validation result: valid={result['is_valid']}, "
+                        f"confidence={result['confidence_score']:.2f}, issues={len(result['issues'])}")
+        
+        if not result["is_valid"]:
+            self.logger.warning(f" [CONTEXT] Output quality issues detected but proceeding with response")
         
         return result["filtered_response"]
     

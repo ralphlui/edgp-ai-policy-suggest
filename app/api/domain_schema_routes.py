@@ -106,8 +106,8 @@ async def create_domain(
                         "actions": {
                             "extend-schema": {
                                 "description": "Add new columns to existing domain",
-                                "endpoint": EXTEND_SCHEMA_ENDPOINT,
-                                "method": "POST",
+                                "endpoint": "/api/aips/domains/extend-schema",
+                                "method": "PUT",
                                 "payload": {
                                     "domain": existing_domain,
                                     "new_columns": ["new_column1", "new_column2"],
@@ -531,9 +531,12 @@ async def verify_domain_exists(
     
 
 @router.get("/schema")
-async def list_domains_in_vectordb():
+async def list_domains_in_vectordb(user: UserInfo = Depends(verify_any_scope_token)):
     """List all domains stored in the vector database."""
     try:
+        # Log authenticated user information (email is already verified by auth)
+        logger.info(f"📋 List domains request from user: {user.email}")
+        
         store = get_store()
         if store is None:
             return JSONResponse({
@@ -587,9 +590,12 @@ async def list_domains_in_vectordb():
 
 
 @router.get("/{domain_name}")
-async def get_domain_from_vectordb(domain_name: str):
+async def get_domain_from_vectordb(domain_name: str, user: UserInfo = Depends(verify_any_scope_token)):
     """Get specific domain details from vector database."""
     try:
+        # Log authenticated user information (email is already verified by auth)
+        logger.info(f"🔍 Get domain '{domain_name}' request from user: {user.email}")
+        
         store = get_store()
         if store is None:
             return JSONResponse({
@@ -813,7 +819,7 @@ Focus on identifying missing business dimensions and valuable extensions to the 
                     "note": "Additional columns suggested for existing domain. These will extend the current schema.",
                     "extend_schema_with_csv": {
                         "description": "Extend existing schema with suggested columns and generate CSV",
-                        "endpoint": EXTEND_SCHEMA_ENDPOINT,
+                        "endpoint": "/api/aips/domains/extend-schema",
                         "method": "PUT",
                         "payload": {
                             "domain": existing_domain_name,
@@ -828,7 +834,7 @@ Focus on identifying missing business dimensions and valuable extensions to the 
                     },
                     "extend_schema_only": {
                         "description": "Extend existing schema with suggested columns",
-                        "endpoint": EXTEND_SCHEMA_ENDPOINT,
+                        "endpoint": "/api/aips/domains/extend-schema",
                         "method": "PUT",
                         "payload": {
                             "domain": existing_domain_name,
@@ -896,7 +902,7 @@ Focus on identifying missing business dimensions and valuable extensions to the 
     
 
 @router.put("/extend-schema")
-async def extend_domain(request: Request):
+async def extend_domain(request: Request, user: UserInfo = Depends(verify_any_scope_token)):
     """
     Extend an existing domain with new columns using AI suggestions.
     
@@ -906,6 +912,9 @@ async def extend_domain(request: Request):
     """
     try:
         body = await request.json()
+        
+        # Log authenticated user information (email is already verified by auth)
+        logger.info(f"🔧 Extend schema request from user: {user.email}")
         
         # Validate required fields
         domain_name = body.get("domain")
@@ -1160,9 +1169,9 @@ async def extend_domain(request: Request):
             "duplicates_skipped": duplicates_skipped,
             "complete_schema": combined_schema,
             "actions": {
-                "suggest_more": f"/api/aips/domains/suggest-extend-schema/{domain_name}",
-                "view_domain": f"/api/aips/domains/{domain_name}",
-                "regenerate_extensions": EXTEND_SCHEMA_ENDPOINT
+                "suggest_more": "/api/aips/domains/suggest-schema",
+                "view_domain": "/api/aips/domains/schema",
+                "regenerate_extensions": "/api/aips/domains/extend-schema"
             }
         })
         
@@ -1175,7 +1184,7 @@ async def extend_domain(request: Request):
     
 
 @router.post("/suggest-extend-schema/{domain_name}")
-async def suggest_extensions(domain_name: str, request: Request):
+async def suggest_extensions(domain_name: str, request: Request, user: UserInfo = Depends(verify_any_scope_token)):
     """
     Suggest additional columns for an existing domain without modifying it.
     
@@ -1183,6 +1192,9 @@ async def suggest_extensions(domain_name: str, request: Request):
     based on the existing schema and user-specified preferences or focus areas.
     """
     try:
+        # Log authenticated user information (email is already verified by auth)
+        logger.info(f"💡 Suggest schema extensions for '{domain_name}' from user: {user.email}")
+        
         try:
             body = await request.json()
         except Exception:
@@ -1291,8 +1303,8 @@ async def suggest_extensions(domain_name: str, request: Request):
             "suggestions": suggestions_by_focus,
             "existing_columns": [col.get("column_name") for col in existing_columns],
             "actions": {
-                "extend_domain": EXTEND_SCHEMA_ENDPOINT,
-                "view_domain": f"/api/aips/domains/{domain_name}",
+                "extend_domain": "/api/aips/domains/extend-schema",
+                "view_domain": "/api/aips/domains/schema", 
                 "resuggest_domain_schema": "/api/aips/domains/suggest-schema"
             }
         })

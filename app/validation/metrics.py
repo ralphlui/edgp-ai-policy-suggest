@@ -65,8 +65,21 @@ class ValidationMetricsCollector:
             validation_result: ValidationResult instance
             validation_time_ms: Time taken for validation in milliseconds
         """
+        # Enhanced logging for metrics recording
+        logger.info(f"📊 [METRICS] Recording validation metric for domain: {domain}, type: {response_type}")
+        logger.debug(f"📈 [METRICS] Valid: {validation_result.is_valid}, "
+                    f"Confidence: {validation_result.confidence_score:.2f}, "
+                    f"Time: {validation_time_ms:.1f}ms")
+        
         # Count issues by severity
         issue_counts = Counter(issue.severity for issue in validation_result.issues)
+        
+        # Log issue breakdown
+        if validation_result.issues:
+            logger.info(f"🔍 [METRICS] Issues breakdown - Critical: {issue_counts.get(ValidationSeverity.CRITICAL, 0)}, "
+                       f"High: {issue_counts.get(ValidationSeverity.HIGH, 0)}, "
+                       f"Medium: {issue_counts.get(ValidationSeverity.MEDIUM, 0)}, "
+                       f"Low: {issue_counts.get(ValidationSeverity.LOW, 0)}")
         
         metric = ValidationMetric(
             timestamp=datetime.now(),
@@ -84,11 +97,35 @@ class ValidationMetricsCollector:
         )
         
         with self._lock:
+            old_count = len(self.metrics)
             self.metrics.append(metric)
+            
+            # Enhanced logging for metrics storage
+            logger.debug(f"💾 [METRICS] Stored metric - Total metrics: {len(self.metrics)}")
+            
+            # Log performance thresholds
+            if validation_time_ms > 1000:  # 1 second
+                logger.warning(f"⏰ [METRICS] Slow validation detected: {validation_time_ms:.1f}ms > 1000ms")
+            elif validation_time_ms > 500:  # 500ms
+                logger.info(f"⚡ [METRICS] Moderate validation time: {validation_time_ms:.1f}ms")
+            
+            # Log confidence score concerns
+            if validation_result.confidence_score < 0.7:
+                logger.warning(f"🎯 [METRICS] Low confidence score: {validation_result.confidence_score:.2f} < 0.7")
             
             # Keep only the most recent metrics
             if len(self.metrics) > self.max_metrics:
+                removed_count = len(self.metrics) - self.max_metrics
                 self.metrics = self.metrics[-self.max_metrics:]
+                logger.debug(f"🗑️ [METRICS] Pruned {removed_count} old metrics, kept {len(self.metrics)}")
+        
+        # Enhanced final logging
+        logger.info(f"✅ [METRICS] Metric recorded successfully - "
+                   f"Domain: {domain}, Type: {response_type}, "
+                   f"Valid: {validation_result.is_valid}, "
+                   f"Confidence: {validation_result.confidence_score:.3f}, "
+                   f"Issues: {len(validation_result.issues)}, "
+                   f"Time: {validation_time_ms:.1f}ms")
         
         self.logger.debug(f"Recorded validation metric for {domain}/{response_type}: "
                          f"valid={validation_result.is_valid}, "
@@ -380,31 +417,49 @@ class ValidationMonitor:
         Returns:
             Performance check results
         """
+        # Enhanced logging for performance monitoring
+        logger.info(f"🔍 [MONITOR] Starting performance check for last {hours} hour(s)")
+        
         summary = get_validation_summary(hours)
+        
+        # Log current performance metrics
+        logger.info(f"📊 [MONITOR] Current metrics - "
+                   f"Total validations: {summary['total_validations']}, "
+                   f"Success rate: {summary['success_rate']:.2f}, "
+                   f"Avg confidence: {summary['avg_confidence']:.2f}")
         
         issues = []
         
         # Check success rate
         if summary["success_rate"] < self.success_rate_threshold:
+            logger.warning(f"🚨 [MONITOR] SUCCESS RATE ALERT: {summary['success_rate']:.2f} < {self.success_rate_threshold}")
             issues.append({
                 "type": "low_success_rate",
                 "current": summary["success_rate"],
                 "threshold": self.success_rate_threshold,
                 "severity": "high"
             })
+        else:
+            logger.info(f"✅ [MONITOR] Success rate OK: {summary['success_rate']:.2f} >= {self.success_rate_threshold}")
         
         # Check confidence score
         if summary["avg_confidence"] < self.confidence_threshold:
+            logger.warning(f"🎯 [MONITOR] CONFIDENCE ALERT: {summary['avg_confidence']:.2f} < {self.confidence_threshold}")
             issues.append({
                 "type": "low_confidence",
                 "current": summary["avg_confidence"], 
                 "threshold": self.confidence_threshold,
                 "severity": "medium"
             })
+        else:
+            logger.info(f"✅ [MONITOR] Confidence OK: {summary['avg_confidence']:.2f} >= {self.confidence_threshold}")
         
         # Check for domains with poor performance
+        domain_issues = 0
         for domain, stats in summary.get("domain_stats", {}).items():
             if stats["success_rate"] < self.success_rate_threshold:
+                logger.warning(f"🏷️ [MONITOR] DOMAIN ALERT: {domain} success rate {stats['success_rate']:.2f} < {self.success_rate_threshold}")
+                domain_issues += 1
                 issues.append({
                     "type": "domain_performance",
                     "domain": domain,
@@ -412,6 +467,23 @@ class ValidationMonitor:
                     "threshold": self.success_rate_threshold,
                     "severity": "medium"
                 })
+        
+        if domain_issues == 0:
+            logger.info(f"✅ [MONITOR] All domains performing within thresholds")
+        
+        # Enhanced alert logging
+        if issues:
+            logger.error(f"🚨 [MONITOR] PERFORMANCE ISSUES DETECTED: {len(issues)} issues found")
+            for issue in issues:
+                logger.error(f"   🔴 {issue['type'].upper()}: "
+                           f"current={issue.get('current', 'N/A')} "
+                           f"threshold={issue.get('threshold', 'N/A')} "
+                           f"severity={issue['severity']}")
+            
+            logger.info(f"📢 [MONITOR] Triggering alert callbacks")
+            self.alert_callback(issues, summary)
+        else:
+            logger.info(f"✅ [MONITOR] All performance checks PASSED - no issues detected")
         
         # Trigger alerts if issues found
         if issues:

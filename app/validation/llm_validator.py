@@ -53,6 +53,9 @@ class RateLimitManager:
         Returns:
             Tuple of (is_allowed, remaining_counts)
         """
+        # Enhanced logging for rate limit checking
+        logger.debug(f"🚦 [RATE_LIMIT] Checking rate limits for user {user_id}")
+        
         now = datetime.now(dt.timezone.utc)
         minute_ago = now - timedelta(minutes=1)
         hour_ago = now - timedelta(hours=1)
@@ -73,12 +76,26 @@ class RateLimitManager:
         is_allowed = (minute_count < self.requests_per_minute and 
                      hour_count < self.requests_per_hour)
         
+        # Enhanced logging for rate limit results
         if is_allowed:
             minute_queue.append(now)
             hour_queue.append(now)
             # Update counts after adding current request
             minute_count += 1
             hour_count += 1
+            logger.debug(f"✅ [RATE_LIMIT] Request allowed for {user_id} - "
+                        f"Minute: {minute_count}/{self.requests_per_minute}, "
+                        f"Hour: {hour_count}/{self.requests_per_hour}")
+        else:
+            logger.warning(f"🚫 [RATE_LIMIT] Request BLOCKED for {user_id} - "
+                          f"Minute: {minute_count}/{self.requests_per_minute}, "
+                          f"Hour: {hour_count}/{self.requests_per_hour}")
+            
+            # Log rate limit breach details
+            if minute_count >= self.requests_per_minute:
+                logger.warning(f"⏱️ [RATE_LIMIT] Minute limit exceeded: {minute_count}/{self.requests_per_minute}")
+            if hour_count >= self.requests_per_hour:
+                logger.warning(f"⏰ [RATE_LIMIT] Hour limit exceeded: {hour_count}/{self.requests_per_hour}")
         
         return is_allowed, {
             "minute_remaining": max(0, self.requests_per_minute - minute_count),
@@ -122,10 +139,15 @@ class InputSanitizer:
         Returns:
             Tuple of (sanitized_input, validation_issues)
         """
+        # Enhanced logging for input sanitization
+        logger.info(f"🧹 [SANITIZER] Starting input sanitization")
+        logger.debug(f"📝 [SANITIZER] Input length: {len(user_input)} chars (max: {self.max_length})")
+        
         issues = []
         
         # Check input length
         if len(user_input) > self.max_length:
+            logger.warning(f"📏 [SANITIZER] Input length violation: {len(user_input)} > {self.max_length}")
             issues.append(ValidationIssue(
                 field="input",
                 message=f"Input length exceeds limit ({len(user_input)} > {self.max_length})",
@@ -134,26 +156,48 @@ class InputSanitizer:
             return "", issues
         
         # Check for blocked patterns
-        for pattern in self.BLOCKED_PATTERNS:
+        blocked_patterns_found = []
+        for i, pattern in enumerate(self.BLOCKED_PATTERNS):
             if re.search(pattern, user_input):
+                blocked_patterns_found.append(f"BLOCKED_PATTERN_{i}")
+                logger.warning(f"🚫 [SANITIZER] BLOCKED security pattern detected: pattern index {i}")
                 issues.append(ValidationIssue(
                     field="input",
                     message=f"Blocked security pattern detected",
                     severity=ValidationSeverity.CRITICAL
                 ))
-                return "", issues
+                
+        if blocked_patterns_found:
+            logger.error(f"🔴 [SANITIZER] Input REJECTED due to {len(blocked_patterns_found)} blocked patterns")
+            return "", issues
         
         # Check for warning patterns
-        for pattern in self.WARNING_PATTERNS:
+        warning_patterns_found = []
+        for i, pattern in enumerate(self.WARNING_PATTERNS):
             if re.search(pattern, user_input):
+                warning_patterns_found.append(f"WARNING_PATTERN_{i}")
+                logger.warning(f"⚠️ [SANITIZER] Warning pattern detected: pattern index {i}")
                 issues.append(ValidationIssue(
                     field="input", 
                     message="Potentially risky pattern detected",
                     severity=ValidationSeverity.HIGH
                 ))
         
+        if warning_patterns_found:
+            logger.info(f"🟡 [SANITIZER] {len(warning_patterns_found)} warning patterns found but proceeding")
+        
         # Basic sanitization
+        logger.debug(f"🔧 [SANITIZER] Applying input cleaning transformations")
         sanitized = self._clean_input(user_input)
+        
+        # Log sanitization results
+        changes_made = len(user_input) != len(sanitized) or user_input != sanitized
+        if changes_made:
+            logger.info(f"✅ [SANITIZER] Input cleaned: {len(user_input)} → {len(sanitized)} chars")
+        else:
+            logger.info(f"✅ [SANITIZER] Input clean - no changes needed")
+        
+        logger.info(f"📊 [SANITIZER] Sanitization complete: {len(issues)} issues, clean={not changes_made}")
         
         return sanitized, issues
     
@@ -528,13 +572,29 @@ class LLMContentValidator:
         Returns:
             ValidationResult with comprehensive safety validation
         """
+        # Enhanced logging for content safety validation
+        logger.info(f" [SAFETY] Starting content safety validation")
+        logger.debug(f" [SAFETY] Content length: {len(content)} chars")
+        
         issues = []
+        safety_violations = []
         
         # Check each safety pattern
         for pattern_type, pattern in self.safety_patterns.items():
             matches = re.findall(pattern, content)
             if matches:
                 severity = self._get_severity_for_pattern_type(pattern_type)
+                safety_violations.append({
+                    "type": pattern_type,
+                    "matches": len(matches),
+                    "severity": severity.value
+                })
+                
+                # Log specific safety violations
+                logger.warning(f" [SAFETY] {pattern_type.upper()} violation detected: "
+                             f"{len(matches)} instances, severity: {severity.value}")
+                logger.debug(f" [SAFETY] Matches preview: {matches[:3]}")
+                
                 issues.append(ValidationIssue(
                     field="content",
                     message=f"Potential {pattern_type.replace('_', ' ')} detected: {len(matches)} instances",
@@ -542,14 +602,26 @@ class LLMContentValidator:
                     raw_value=matches[:3] if len(matches) <= 3 else matches[:3] + ["..."]  # Limit to first 3
                 ))
         
+        # Log safety check results
+        if safety_violations:
+            critical_violations = [v for v in safety_violations if v["severity"] == "critical"]
+            high_violations = [v for v in safety_violations if v["severity"] == "high"]
+            
+            logger.warning(f" [SAFETY] Safety violations found: {len(safety_violations)} total, "
+                          f"{len(critical_violations)} critical, {len(high_violations)} high")
+        else:
+            logger.info(f" [SAFETY] Content passed all safety pattern checks")
+        
         # Check content length and quality
         if len(content.strip()) == 0:
+            logger.warning(f" [SAFETY] Empty content detected")
             issues.append(ValidationIssue(
                 field="content",
                 message="Content is empty",
                 severity=ValidationSeverity.CRITICAL
             ))
         elif len(content.strip()) < 5:
+            logger.warning(f" [SAFETY] Content too short: {len(content.strip())} chars")
             issues.append(ValidationIssue(
                 field="content", 
                 message="Content is too short",

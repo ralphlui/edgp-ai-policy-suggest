@@ -84,9 +84,16 @@ class TestAgentRunnerModule:
         assert result == []
 
     @patch('app.agents.agent_runner.build_graph')
-    def test_run_agent_complex_query(self, mock_build_graph):
+    @patch('app.agents.agent_runner._setup_validation_context')
+    def test_run_agent_complex_query(self, mock_setup_validation, mock_build_graph):
         """Test agent with complex schema"""
-        mock_result = Mock()
+        from app.state.state import AgentState
+        
+        # Mock validation context to return None (no validation)
+        mock_setup_validation.return_value = None
+        
+        # Create a proper AgentState mock result
+        mock_result = AgentState(data_schema={"test": "schema"})
         mock_result.rule_suggestions = [
             {"rule": "test1", "column": "col1"},
             {"rule": "test2", "column": "col2"}
@@ -95,7 +102,8 @@ class TestAgentRunnerModule:
         mock_result.observations = ["obs1", "obs2"]
         mock_result.reflections = ["reflection1"]
         mock_result.execution_metrics = {"total_execution_time": 1.5}
-        mock_result.step_history = ["step1", "step2"]
+        mock_result.step_history = []
+        
         mock_graph = Mock()
         mock_graph.invoke.return_value = mock_result
         mock_build_graph.return_value = mock_graph
@@ -103,6 +111,7 @@ class TestAgentRunnerModule:
         from app.agents.agent_runner import run_agent
         
         complex_schema = {
+            "domain": "test_domain",
             "col1": {"type": "string", "nullable": False},
             "col2": {"type": "integer", "nullable": True},
             "col3": {"type": "date", "nullable": False}
@@ -372,26 +381,27 @@ class TestAgentReporting:
 class TestAgentIntegration:
     """Test integration scenarios for the agent runner"""
     
-    @patch('app.agents.agent_runner.validate_llm_response')
-    @patch('app.agents.agent_runner.record_validation_metric')
-    def test_run_agent_with_validation(self, mock_record_metric, mock_validate):
+    @patch('app.agents.agent_runner._setup_validation_context')
+    @patch('app.agents.agent_runner._validate_with_enhanced_context')
+    def test_run_agent_with_validation(self, mock_validate_context, mock_setup_validation):
         """Test agent execution with validation enabled"""
         from app.agents.agent_runner import run_agent
-        from app.validation.llm_validator import ValidationResult
+        from app.state.state import AgentState
         
-        # Setup validation mocks
-        mock_validation_result = ValidationResult(
-            is_valid=True,
-            confidence_score=0.95,
-            issues=[],
-            corrected_data=None
-        )
-        mock_validate.return_value = mock_validation_result
+        # Setup validation context mock
+        mock_context = Mock()
+        mock_context.__enter__ = Mock(return_value=mock_context)
+        mock_context.__exit__ = Mock(return_value=False)
+        mock_context.get_metrics.return_value = {"validation_count": 1}
+        mock_setup_validation.return_value = mock_context
+        
+        # Mock the validation function to return the rule suggestions
+        mock_validate_context.return_value = [{"rule": "test"}]
         
         # Run agent with basic schema
         with patch('app.agents.agent_runner.build_graph') as mock_build_graph:
             mock_graph = Mock()
-            mock_result = Mock()
+            mock_result = AgentState(data_schema={"test": "schema"})
             mock_result.rule_suggestions = [{"rule": "test"}]
             mock_result.thoughts = ["thought1"]
             mock_result.observations = ["obs1"]
@@ -401,15 +411,19 @@ class TestAgentIntegration:
             mock_graph.invoke.return_value = mock_result
             mock_build_graph.return_value = mock_graph
             
-            result = run_agent({"col1": {"type": "string"}})
+            result = run_agent({"domain": "test", "col1": {"type": "string"}})
             
             assert len(result) == 1
-            mock_validate.assert_called_once()
-            mock_record_metric.assert_called_once()
+            mock_validate_context.assert_called_once()
     
-    def test_run_agent_complex_workflow(self):
+    @patch('app.agents.agent_runner._setup_validation_context')
+    def test_run_agent_complex_workflow(self, mock_setup_validation):
         """Test agent with complex schema and workflow"""
         from app.agents.agent_runner import run_agent
+        from app.state.state import AgentState
+        
+        # Mock validation context to return None (no validation)
+        mock_setup_validation.return_value = None
         
         # Complex schema with various data types
         complex_schema = {
@@ -424,7 +438,7 @@ class TestAgentIntegration:
         with patch('app.agents.agent_runner.build_graph') as mock_build_graph:
             # Setup complex mock workflow
             mock_graph = Mock()
-            mock_result = Mock()
+            mock_result = AgentState(data_schema=complex_schema)
             mock_result.rule_suggestions = [
                 {"rule": "rule1", "column": "transaction_id"},
                 {"rule": "rule2", "column": "amount"},

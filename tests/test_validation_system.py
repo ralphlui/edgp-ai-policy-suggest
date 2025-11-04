@@ -396,8 +396,10 @@ class TestValidationMonitor:
         # Mock get_validation_summary to return healthy metrics
         with patch('app.validation.metrics.get_validation_summary') as mock_summary:
             mock_summary.return_value = {
+                "total_validations": 100,
                 "success_rate": 0.95,
                 "avg_confidence": 0.85,
+                "avg_validation_time": 150.0,
                 "domain_stats": {
                     "customer": {"success_rate": 0.9}
                 }
@@ -413,8 +415,10 @@ class TestValidationMonitor:
         # Mock get_validation_summary to return poor metrics
         with patch('app.validation.metrics.get_validation_summary') as mock_summary:
             mock_summary.return_value = {
+                "total_validations": 50,
                 "success_rate": 0.6,  # Below threshold
                 "avg_confidence": 0.5,  # Below threshold
+                "avg_validation_time": 300.0,
                 "domain_stats": {
                     "customer": {"success_rate": 0.7}  # Below threshold
                 }

@@ -317,28 +317,26 @@ def build_graph():
     return workflow.compile()
 
 def _setup_validation_context(domain: str, schema: dict) -> Optional[AgentValidationContext]:
-    """Set up validation context if enabled - optimized for performance"""
-    if not settings.llm_validation_enabled:
-        logger.info(" LLM validation disabled")
-        return None
+    """Set up validation context - ALWAYS ENABLED for production safety"""
+    # Always enable validation for production safety
+    logger.info(" LLM validation enabled with optimized config")
         
-    # Use minimal validation config for better performance
+    # Use production-optimized validation config
     validation_config = {
         "enabled": True,
-        "strict_mode": False,  # Disable strict mode for speed
-        "auto_correct": False,  # Disable auto-correction
-        "rate_limit_per_minute": 120,  # Increase rate limit
+        "strict_mode": False,  # Optimized for business context
+        "auto_correct": True,  # Enable auto-correction for better UX
+        "rate_limit_per_minute": 120,  # Generous rate limit for agents
         "rate_limit_per_hour": 2000,
         "max_input_length": 10000,
-        "enable_advanced_safety": False,  # Disable advanced safety for speed
-        "policy_aware": False,  # Disable policy awareness
-        "business_context": False,  # Disable business context
-        "schema_validation": True  # Keep basic schema validation
+        "enable_advanced_safety": True,  # Enable safety for production
+        "policy_aware": True,  # Enable policy awareness for better validation
+        "business_context": True,  # Enable business context for production
+        "schema_validation": True  # Keep schema validation
     }
     
     user_id = f"agent_{domain}_{hash(domain) % 10000}"  # Simpler hash
     context = AgentValidationContext(user_id, validation_config)
-    logger.info(" LLM validation enabled with optimized config")
     return context
 
 def _extract_results(result: Union[AgentState, dict]) -> Tuple[List[Any], List[str], List[str], List[str], Dict[str, Any], List[AgentStep]]:
@@ -449,13 +447,40 @@ def run_agent(schema: dict) -> List[Dict[str, Any]]:
         # Setup validation
         validation_context = _setup_validation_context(domain, schema)
         
-        with validation_context if validation_context else None as validator:
-            logger.info(f" Starting enhanced agentic workflow for domain: {domain}")
+        # Use context manager properly (handle None case)
+        if validation_context:
+            with validation_context as validator:
+                logger.info(f" Starting enhanced agentic workflow for domain: {domain}")
+                
+                # Initialize and run
+                initial_state = AgentState(data_schema=schema)
+                
+                graph = build_graph()
+                result = graph.invoke(initial_state)
+
+                # Process results
+                rule_suggestions, thoughts, observations, reflections, execution_metrics, step_history = _extract_results(result)
+                
+                # Log progress
+                _log_agent_progress(
+                    thoughts, observations, reflections, rule_suggestions,
+                    validator.get_metrics()
+                )
+
+                # Validate if there are suggestions using enhanced context
+                if rule_suggestions:
+                    rule_suggestions = _validate_with_enhanced_context(
+                        validator, domain, rule_suggestions, thoughts, observations, 
+                        reflections, execution_metrics, step_history, validation_start_time
+                    )
+                
+                return rule_suggestions
+        else:
+            # Run without validation context
+            logger.info(f" Starting agentic workflow for domain: {domain} (no validation)")
             
             # Initialize and run
             initial_state = AgentState(data_schema=schema)
-            if validator:
-                initial_state.metadata["validation_context"] = validator
             
             graph = build_graph()
             result = graph.invoke(initial_state)
@@ -464,57 +489,103 @@ def run_agent(schema: dict) -> List[Dict[str, Any]]:
             rule_suggestions, thoughts, observations, reflections, execution_metrics, step_history = _extract_results(result)
             
             # Log progress
-            _log_agent_progress(
-                thoughts, observations, reflections, rule_suggestions,
-                validator.get_metrics() if validator else None
-            )
+            _log_agent_progress(thoughts, observations, reflections, rule_suggestions, None)
 
-            # Validate if there are suggestions
+            # Validate if there are suggestions using direct validation
             if rule_suggestions:
-                validation_response = _create_validation_response(
-                    domain, rule_suggestions, thoughts, observations,
-                    reflections, execution_metrics, step_history
+                rule_suggestions = _validate_without_context(
+                    domain, rule_suggestions, thoughts, observations, 
+                    reflections, execution_metrics, step_history, validation_start_time
                 )
-                
-                validation_result = validate_llm_response(
-                    response=validation_response,
-                    response_type="rule",
-                    strict_mode=False,
-                    auto_correct=True
-                )
-                
-                # Record metrics
-                try:
-                    record_validation_metric(
-                        domain=domain,
-                        response_type="rule",
-                        validation_result=validation_result,
-                        validation_time_ms=(time.time() - validation_start_time) * 1000
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to record enhanced validation metrics: {e}")
-                
-                # Log validation results
-                if validation_result.issues:
-                    logger.warning(f" Validation found {len(validation_result.issues)} issues:")
-                    for issue in validation_result.issues:
-                        logger.warning(f"   {issue.severity.value.upper()}: {issue.field} - {issue.message}")
-                
-                logger.info(f" Validation confidence: {validation_result.confidence_score:.2f}")
-                logger.info(f" Total execution time: {execution_metrics.get('total_execution_time', 0):.2f}s")
-                
-                # Use corrected rules if available
-                if validation_result.corrected_data and validation_result.corrected_data.get("rules"):
-                    logger.info(" Using auto-corrected rule suggestions")
-                    rule_suggestions = validation_result.corrected_data["rules"]
             
             return rule_suggestions
             
     except Exception as e:
         _handle_agent_error(e, domain, validation_start_time)
         return []
+
+def _validate_with_enhanced_context(validator, domain, rule_suggestions, thoughts, observations, 
+                                  reflections, execution_metrics, step_history, validation_start_time):
+    """Validate rule suggestions using enhanced validation context with comprehensive logging"""
+    validation_response = _create_validation_response(
+        domain, rule_suggestions, thoughts, observations,
+        reflections, execution_metrics, step_history
+    )
+    
+    # Enhanced validation through context with comprehensive logging
+    logger.info(f"🔍 Using enhanced validation context for rule suggestions")
+    
+    try:
+        validated_response = validator.validate_output(validation_response, "rule")
         
-        return []
+        # Create a ValidationResult-like structure from the middleware response
+        validation_result = type('ValidationResult', (), {
+            'is_valid': validated_response.get('is_valid', True) if isinstance(validated_response, dict) else True,
+            'confidence_score': validated_response.get('confidence_score', 1.0) if isinstance(validated_response, dict) else 1.0,
+            'issues': validated_response.get('issues', []) if isinstance(validated_response, dict) else [],
+            'corrected_data': {"rules": validated_response} if validated_response != validation_response else None
+        })()
+        
+    except Exception as validation_error:
+        logger.warning(f"Enhanced validation failed, falling back to direct validation: {validation_error}")
+        # Fallback to direct validation if enhanced validation fails
+        validation_result = validate_llm_response(
+            response=validation_response,
+            response_type="rule",
+            strict_mode=False,
+            auto_correct=True
+        )
+    
+    # Record metrics and handle results
+    return _process_validation_result(validation_result, domain, rule_suggestions, validation_start_time)
+
+def _validate_without_context(domain, rule_suggestions, thoughts, observations, 
+                            reflections, execution_metrics, step_history, validation_start_time):
+    """Validate rule suggestions using direct validation (fallback when no context)"""
+    logger.info(f" Using direct validation (no context available)")
+    
+    validation_response = _create_validation_response(
+        domain, rule_suggestions, thoughts, observations,
+        reflections, execution_metrics, step_history
+    )
+    
+    validation_result = validate_llm_response(
+        response=validation_response,
+        response_type="rule",
+        strict_mode=False,
+        auto_correct=True
+    )
+    
+    # Record metrics and handle results
+    return _process_validation_result(validation_result, domain, rule_suggestions, validation_start_time)
+
+def _process_validation_result(validation_result, domain, rule_suggestions, validation_start_time):
+    """Process validation results and record metrics"""
+    # Record metrics
+    try:
+        record_validation_metric(
+            domain=domain,
+            response_type="rule",
+            validation_result=validation_result,
+            validation_time_ms=(time.time() - validation_start_time) * 1000
+        )
+    except Exception as e:
+        logger.warning(f"Failed to record enhanced validation metrics: {e}")
+    
+    # Log validation results
+    if validation_result.issues:
+        logger.warning(f" Validation found {len(validation_result.issues)} issues:")
+        for issue in validation_result.issues:
+            logger.warning(f"   {issue.severity.value.upper()}: {issue.field} - {issue.message}")
+    
+    logger.info(f" Validation confidence: {validation_result.confidence_score:.2f}")
+    
+    # Use corrected rules if available
+    if validation_result.corrected_data and validation_result.corrected_data.get("rules"):
+        logger.info(" Using auto-corrected rule suggestions")
+        return validation_result.corrected_data["rules"]
+    
+    return rule_suggestions
 
 def generate_agent_report(state: AgentState) -> str:
     """Generate a comprehensive report of the agent's reasoning process"""

@@ -635,14 +635,45 @@ def generate_type_specific_fallback(column: str, data_type: str) -> dict:
     }
 
 def _process_llm_request(llm, prompt: str) -> str:
-    """Process a single LLM request and return the response"""
+    """Process a single LLM request with enhanced validation and return the response"""
     try:
-        # Make LLM call
-        response = llm.invoke([{"role": "user", "content": prompt}])
-        result = response.content.strip()
+        # Get validation config and create user ID for this request
+        validation_config = settings.get_llm_validation_config()
+        user_id = f"agent_rules_{hash(prompt) % 10000}"
         
-        # Log raw response for debugging
-        logger.debug(f"Raw LLM response: {result}")
+        # Use enhanced validation context for comprehensive logging
+        from app.validation.middleware import AgentValidationContext
+        
+        with AgentValidationContext(user_id, validation_config) as validator:
+            logger.info(" [RULES] Using enhanced validation for rule generation")
+            
+            # Enhanced input validation with comprehensive logging
+            sanitized_prompt = validator.validate_input(prompt)
+            
+            # Make LLM call with validated input
+            response = llm.invoke([{"role": "user", "content": sanitized_prompt}])
+            result = response.content.strip()
+            
+            # Log raw response for debugging
+            logger.debug(f"Raw LLM response: {result}")
+            
+            # Enhanced output validation with comprehensive logging
+            validated_result = validator.validate_output(result, "content")
+            
+            # Return the validated result (could be the same as input if no issues)
+            return validated_result if isinstance(validated_result, str) else result
+            
+    except Exception as e:
+        logger.error(f" [RULES] LLM request failed with validation: {e}")
+        # Fallback to direct call if validation fails
+        try:
+            response = llm.invoke([{"role": "user", "content": prompt}])
+            result = response.content.strip()
+            logger.warning(f" [RULES] Fallback to direct LLM call succeeded")
+            return result
+        except Exception as fallback_error:
+            logger.error(f" [RULES] Both validation and fallback failed: {fallback_error}")
+            raise fallback_error
         
         # Extract JSON if wrapped in markdown code blocks
         if result.startswith("```json"):
@@ -708,41 +739,34 @@ def suggest_column_names_only(domain: str) -> list:
     # Use enhanced prompt from configuration system  
     prompt = get_enhanced_column_prompt(domain)
 
-    # Get validation config
-    validation_config = None
-    if settings.llm_validation_enabled:
-        validation_config = settings.get_llm_validation_config()
+
+    validation_config = settings.get_llm_validation_config() 
     
     # Create a unique user ID for this request
     user_id = f"agent_columns_{domain}_{hash(domain) % 10000}"
     
     try:
-        # Validate input if validation is enabled
-        if validation_config:
-            logger.info(" Validating column suggestion input")
-            sanitized_prompt = validate_input_quick(prompt, user_id)
-            logger.info(" Input validation passed")
-        else:
-            sanitized_prompt = prompt
-            logger.info(" LLM validation disabled")
-
-        logger.info("LLM Prompt for column names:\n%s", sanitized_prompt)
-        
-        # Make LLM call
-        response = llm.invoke(sanitized_prompt)
-        raw_response = response.content.strip()
-        
-        logger.info("Raw LLM column names output:\n%s", raw_response)
-        
-        # Validate output if validation is enabled
-        if validation_config:
-            logger.info(" Validating column suggestion output")
-            validated_response = validate_output_quick(raw_response, "content")
-            logger.info(" Output validation passed")
+        # Always use enhanced validation context for comprehensive logging
+        from app.validation.middleware import AgentValidationContext
+            
+        with AgentValidationContext(user_id, validation_config) as validator:
+            logger.info(" Using enhanced validation context for column suggestions")
+            
+            # Enhanced input validation with comprehensive logging
+            sanitized_prompt = validator.validate_input(prompt)
+            
+            logger.info("LLM Prompt for column names:\n%s", sanitized_prompt)
+            
+            # Make LLM call
+            response = llm.invoke(sanitized_prompt)
+            raw_response = response.content.strip()
+            
+            logger.info("Raw LLM column names output:\n%s", raw_response)
+            
+            # Enhanced output validation with comprehensive logging
+            validated_response = validator.validate_output(raw_response, "content")
+            
             return validated_response
-        else:
-            logger.info(" LLM validation disabled")
-            return raw_response
             
     except ValidationError as e:
         logger.error(f" Column suggestion validation failed: {e}")

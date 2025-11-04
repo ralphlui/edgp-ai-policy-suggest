@@ -134,8 +134,8 @@ class Settings(BaseSettings):
     rules_llm_model: str = Field(default=os.getenv("RULES_LLM_MODEL", "gpt-4o-mini"), alias="RULES_LLM_MODEL")
     llm_temperature: float = Field(default=float(os.getenv("LLM_TEMPERATURE", "0.3")), alias="LLM_TEMPERATURE")
 
-    # LLM Validation and Safety Configuration
-    llm_validation_enabled: bool = Field(default=os.getenv("LLM_VALIDATION_ENABLED", "true").lower() == "true", alias="LLM_VALIDATION_ENABLED")
+    # LLM Validation and Safety Configuration - ALWAYS ENABLED
+    llm_validation_enabled: bool = True
     llm_input_max_length: int = Field(default=int(os.getenv("LLM_INPUT_MAX_LENGTH", "10000")), alias="LLM_INPUT_MAX_LENGTH")
     llm_output_max_length: int = Field(default=int(os.getenv("LLM_OUTPUT_MAX_LENGTH", "50000")), alias="LLM_OUTPUT_MAX_LENGTH")
     llm_rate_limit_per_minute: int = Field(default=int(os.getenv("LLM_RATE_LIMIT_PER_MINUTE", "60")), alias="LLM_RATE_LIMIT_PER_MINUTE")
@@ -167,9 +167,8 @@ class Settings(BaseSettings):
         return self.llm_input_max_length
     
     def get_llm_validation_config(self) -> Dict[str, Any]:
-        """Get LLM validation configuration with policy-aware defaults"""
+        """Get LLM validation configuration with policy-aware defaults - ALWAYS ACTIVE"""
         return {
-            "enabled": self.llm_validation_enabled,
             "strict_mode": False,  # More lenient for business context
             "auto_correct": True,  # Enable auto-correction for better UX
             "rate_limit_per_minute": self.llm_rate_limit_per_minute,
