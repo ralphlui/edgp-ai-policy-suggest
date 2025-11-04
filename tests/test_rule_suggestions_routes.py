@@ -16,8 +16,9 @@ from app.auth.authentication import UserInfo
 # ------------------ Test helpers / fakes ------------------
 
 class FakeUser:
-    def __init__(self, email="tester@example.com", scopes=None):
+    def __init__(self, email="tester@example.com", scopes=None, user_id="test_user_123"):
         self.email = email
+        self.user_id = user_id  # Add user_id for PII protection compliance
         self.scopes = scopes or ["manage:mdm"]
 
 class FakeStore:

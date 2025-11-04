@@ -278,7 +278,7 @@ async def suggest_rules(
         is_valid, violations = guardrails.comprehensive_validate(domain, available_domains)
         
         if not is_valid:
-            logger.warning(f"❌ [GUARDRAIL] Input validation FAILED for domain: '{domain}' - {len(violations)} violations")
+            logger.warning(f" [GUARDRAIL] Input validation FAILED for domain: '{domain}' - {len(violations)} violations")
             
             # Return structured error response without calling LLM
             guardrail_response = create_guardrail_response(violations)
@@ -286,7 +286,7 @@ async def suggest_rules(
                 "domain": domain,
                 "timestamp": time.time(),
                 "processing_time_ms": 0,  # No LLM processing
-                "user_email": user.email,
+                "user_id": user.user_id,  # Use user_id instead of email for PII protection
                 "available_domains_count": len(available_domains)
             })
             
@@ -295,7 +295,7 @@ async def suggest_rules(
                 content=guardrail_response
             )
         
-        logger.info(f"✅ [GUARDRAIL] Input validation PASSED for domain: '{domain}' - proceeding to LLM processing")
+        logger.info(f" [GUARDRAIL] Input validation PASSED for domain: '{domain}' - proceeding to LLM processing")
         
         # Log overall request start time (after guardrails)
         request_start_time = time.time()
