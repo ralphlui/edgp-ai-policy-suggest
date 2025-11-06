@@ -1,7 +1,7 @@
 import json
 import types
 import pytest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 from app.tools import rule_tools
 from app.tools.rule_tools import (
@@ -221,3 +221,121 @@ def test_fetch_gx_rules_http_exception(monkeypatch):
     rules = rule_tools.fetch_gx_rules.invoke("")
     assert isinstance(rules, list)
     assert any(r.get("rule_name") == "ExpectColumnValuesToBeUnique" for r in rules)
+
+
+def test_normalize_rule_name():
+    """Test the rule name normalization function"""
+    from app.tools.rule_tools import _normalize_rule_name
+    
+    # Test basic case
+    result = _normalize_rule_name("expect_column_values_to_be_unique")
+    assert "Expect" in result and "Column" in result and "Values" in result and "Unique" in result
+    
+    # Test edge cases
+    assert _normalize_rule_name("") == ""
+    assert _normalize_rule_name("single") == "ExpectSingle"
+
+
+def test_get_default_rules():
+    """Test getting default rules when external fetch fails"""
+    from app.tools.rule_tools import _get_default_rules
+    
+    rules = _get_default_rules()
+    
+    assert isinstance(rules, list)
+    assert len(rules) > 0
+    
+    # Check for expected default rules
+    rule_names = [rule.get("rule_name") for rule in rules]
+    assert "ExpectColumnDistinctValuesToBeInSet" in rule_names
+    assert "ExpectColumnValuesToBeInSet" in rule_names
+    assert "ExpectColumnValuesToNotBeInSet" in rule_names
+
+
+def test_generate_type_specific_fallback():
+    """Test type-specific fallback rule generation"""
+    from app.tools.rule_tools import generate_type_specific_fallback
+    
+    # Test string type
+    string_rule = generate_type_specific_fallback("email", "string")
+    assert isinstance(string_rule, dict)
+    assert "column" in string_rule
+    assert "expectations" in string_rule
+    assert len(string_rule["expectations"]) > 0
+    
+    # Test integer type
+    int_rule = generate_type_specific_fallback("age", "integer")
+    assert isinstance(int_rule, dict)
+    assert "column" in int_rule
+    assert "expectations" in int_rule
+
+
+def test_suggest_column_names_only():
+    """Test column names suggestion without rules"""
+    from app.tools.rule_tools import suggest_column_names_only
+    
+    with patch('app.tools.rule_tools.ChatOpenAI') as mock_chat:
+        mock_llm = Mock()
+        mock_llm.invoke.return_value = Mock(content='{"columns": ["name", "email", "age"]}')
+        mock_chat.return_value = mock_llm
+        
+        with patch('app.tools.rule_tools.require_openai_api_key', return_value="fake_key"):
+            with patch('app.validation.middleware.AgentValidationContext') as mock_context:
+                mock_validator = Mock()
+                mock_validator.validate_output.return_value = ["name", "email", "age"]
+                mock_context.return_value.__enter__.return_value = mock_validator
+                
+                columns = suggest_column_names_only("customer")
+                
+                assert isinstance(columns, list)
+                assert len(columns) == 3
+
+
+def test_process_llm_request_with_validation_context():
+    """Test LLM request processing with validation context"""
+    from app.tools.rule_tools import _process_llm_request
+    
+    mock_llm = Mock()
+    mock_llm.invoke.return_value = Mock(content='test response')
+    
+    with patch('app.validation.middleware.AgentValidationContext') as mock_context:
+        mock_validator = Mock()
+        mock_validator.validate_input.return_value = "sanitized prompt"
+        mock_validator.validate_output.return_value = "validated response"
+        mock_context.return_value.__enter__.return_value = mock_validator
+        
+        result = _process_llm_request(mock_llm, "test prompt")
+        
+        assert result == "validated response"
+        mock_validator.validate_input.assert_called_once_with("test prompt")
+        mock_validator.validate_output.assert_called_once()
+
+
+def test_process_llm_request_without_validation_context():
+    """Test LLM request processing when validation fails"""
+    from app.tools.rule_tools import _process_llm_request
+    
+    mock_llm = Mock()
+    mock_llm.invoke.return_value = Mock(content='test response')
+    
+    with patch('app.validation.middleware.AgentValidationContext') as mock_context:
+        mock_context.return_value.__enter__.side_effect = Exception("Validation context error")
+        
+        result = _process_llm_request(mock_llm, "test prompt")
+        
+        # Should return empty list when validation context fails
+        assert result == []
+
+
+def test_process_llm_request_without_validation_context():
+    """Test LLM request processing without validation context"""
+    from app.tools.rule_tools import _process_llm_request
+    
+    mock_llm = Mock()
+    mock_llm.invoke.return_value = Mock(content="test response")
+    
+    # Test basic functionality without validation context
+    result = _process_llm_request(mock_llm, "test prompt")
+    
+    assert result == "test response"
+    mock_llm.invoke.assert_called_once()

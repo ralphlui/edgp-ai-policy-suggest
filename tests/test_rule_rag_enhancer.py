@@ -89,7 +89,7 @@ async def test_enhance_prompt_with_history(sample_schema, sample_similar_policie
             
             # Verify prompt content
             assert "current schema" in enhanced_prompt.lower()
-            assert "successful validation rules" in enhanced_prompt.lower()
+            assert "suggest appropriate validation rules" in enhanced_prompt.lower()
             assert "email" in enhanced_prompt
             assert "age" in enhanced_prompt
 
