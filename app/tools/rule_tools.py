@@ -414,7 +414,7 @@ def _get_default_rules() -> list:
     ]
 
 @tool
-def suggest_column_rules(data_schema: dict, gx_rules: list) -> str:
+def suggest_column_rules(data_schema: dict, gx_rules: list, enhanced_prompt: str = None) -> str:
     """Use LLM to suggest GX rules for all columns in a single call with optimized batching."""
     
     openai_key = require_openai_api_key()
@@ -483,7 +483,16 @@ def suggest_column_rules(data_schema: dict, gx_rules: list) -> str:
         
         # Generate prompt for all columns of this type
         column_info = [f"{col}({data_type})" for col in group_columns]
-        prompt = get_enhanced_rule_prompt(domain, group_schema, type_rules)
+        
+        # Use RAG-enhanced prompt if available, otherwise fallback to regular prompt
+        if enhanced_prompt:
+            # Use the RAG-enhanced prompt that includes historical context
+            prompt = enhanced_prompt
+            logger.info(f"🔄 Using RAG-enhanced prompt with historical context")
+        else:
+            # Fallback to regular prompt generation
+            prompt = get_enhanced_rule_prompt(domain, group_schema, type_rules)
+            logger.info(f"📝 Using standard prompt (no RAG context available)")
 
         # Enhanced specific instruction for column-appropriate rule selection
         enhanced_instruction = f"""

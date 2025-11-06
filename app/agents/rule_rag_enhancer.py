@@ -52,23 +52,31 @@ class RuleRAGEnhancer:
 
             # Build enhanced prompt
             logger.info("Building enhanced prompt with historical context")
-            prompt = f"""
-Given the current schema:
+            prompt = f"""You are an expert data governance specialist. Generate Great Expectations validation rules for the given schema.
+
+**CURRENT SCHEMA:**
 {schema_str}
 
-Here are some successful validation rules that worked well for similar schemas:
+**HISTORICAL SUCCESS PATTERNS:**
 {historical_context}
 
-Based on these successful patterns and the current schema, suggest appropriate validation rules.
-Focus on rules that have proven effective in similar contexts while adapting them to the specific
-requirements of the current schema.
+**INSTRUCTIONS:**
+Based on the historical patterns above that have proven successful, suggest appropriate validation rules for the current schema.
 
-Ensure the suggested rules:
-1. Follow patterns that have shown high success rates
-2. Are adapted to the specific data types and constraints of the current schema
+**RULES TO FOLLOW:**
+1. Follow patterns that have shown high success rates (>80%)
+2. Adapt rules to the specific data types and constraints of the current schema
 3. Maintain consistency with domain-specific validation requirements
 4. Consider both data quality and business logic validations
-"""
+5. Use the exact Great Expectations rule format
+
+**OUTPUT FORMAT:**
+Return ONLY a valid JSON array with this structure:
+[{{"column":"column_name","expectations":[{{"expectation_type":"rule_type","kwargs":{{}},"meta":{{"reasoning":"why this rule"}}}}]}}]
+
+**DOMAIN CONTEXT:** {domain}
+
+Generate rules now:"""
             return prompt
 
         except Exception as e:
@@ -139,18 +147,31 @@ Ensure the suggested rules:
     def _format_historical_context(self, similar_policies: List[Dict[str, Any]]) -> str:
         """Format historical policies into readable context"""
         if not similar_policies:
-            return "No similar historical policies found."
+            return "No similar historical policies found. Use your expertise to suggest appropriate rules."
 
         context_parts = []
         for idx, policy in enumerate(similar_policies, 1):
             success_rate = policy.get("performance_metrics", {}).get("success_rate", 0)
             rules = policy.get("rules", [])
             
-            context_parts.append(f"\nHistorical Policy {idx} (Success Rate: {success_rate:.2%}):")
-            for rule in rules:
-                context_parts.append(f"- Rule Type: {rule.get('type')}")
-                context_parts.append(f"  Parameters: {rule.get('parameters')}")
-                if rule.get('description'):
-                    context_parts.append(f"  Description: {rule.get('description')}")
+            context_parts.append(f"\n--- Historical Policy {idx} (Success Rate: {success_rate:.1%}) ---")
+            
+            if rules:
+                context_parts.append("Successful Rules Used:")
+                for rule in rules:
+                    rule_name = rule.get('rule_name', rule.get('type', 'Unknown'))
+                    column_name = rule.get('column_name', rule.get('column', 'N/A'))
+                    value = rule.get('value', rule.get('parameters', {}))
+                    
+                    context_parts.append(f"• {rule_name} on column '{column_name}'")
+                    if value:
+                        context_parts.append(f"  Parameters: {value}")
+                        
+                    description = rule.get('description', rule.get('meta', {}).get('reasoning', ''))
+                    if description:
+                        context_parts.append(f"  Purpose: {description}")
+            else:
+                context_parts.append("No specific rule details available")
 
+        context_parts.append("\n--- End Historical Context ---\n")
         return "\n".join(context_parts)
