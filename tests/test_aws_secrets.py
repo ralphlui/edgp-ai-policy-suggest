@@ -225,7 +225,9 @@ class TestCredentialManager:
             "aws_jwt_key"      # Second call for JWT key
         ]
         
-        with patch.dict(os.environ, clear=True):
+        # Provide LANGCHAIN_API_KEY to avoid extra Secrets Manager lookups for LangSmith,
+        # which would otherwise consume our side_effects and cause JWT retrieval to be None.
+        with patch.dict(os.environ, {"LANGCHAIN_API_KEY": "sk-test-key"}, clear=True):
             manager.load_credentials()
             assert manager.get_openai_api_key() == "aws_openai_key"
             assert manager.get_jwt_public_key() == _format_jwt_public_key("aws_jwt_key")

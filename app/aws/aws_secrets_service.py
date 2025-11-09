@@ -193,6 +193,7 @@ class CredentialManager:
     def __init__(self, aws_service: Optional[AWSSecretsManagerService] = None):
         self.aws_service = aws_service or AWSSecretsManagerService()
         self._openai_api_key: Optional[str] = None
+        self._langsmith_api_key: Optional[str] = None
         self._jwt_public_key: Optional[str] = None
         self._loaded: bool = False
 
@@ -205,6 +206,8 @@ class CredentialManager:
 
         # 1) ENV first (great for SIT)
         self._openai_api_key = os.getenv("OPENAI_API_KEY")
+        # LangSmith key loaded similarly, but uses its own secret name if provided
+        self._langsmith_api_key = os.getenv("LANGCHAIN_API_KEY")
         jwt_env = os.getenv("JWT_PUBLIC_KEY")
         self._jwt_public_key = _format_jwt_public_key(jwt_env) if jwt_env else None
 
@@ -219,6 +222,32 @@ class CredentialManager:
             except Exception as e:
                 logger.warning("AWS SM failed (OpenAI key): %s", e)
 
+        # LangSmith secret retrieval (optional)
+        if (not self._langsmith_api_key) or self._langsmith_api_key == "sk-your-key":
+            try:
+                # Prefer dedicated secret name, else fall back to OpenAI secret
+                langsmith_secret_name = os.getenv("LANGCHAIN_SECRET_NAME") or secret_name or _get_openai_secret_name()
+                if langsmith_secret_name:
+                    # attempt common field names (including project-specific naming)
+                    for field in (
+                        "ai_agent_langsmith_api_key",  # project-specific
+                        "langsmith_api_key",
+                        "LANGCHAIN_API_KEY",
+                        "api_key",
+                        "key",
+                    ):
+                        self._langsmith_api_key = self.aws_service.get_secret(langsmith_secret_name, field)
+                        if self._langsmith_api_key:
+                            break
+                    # fallback plain secret value (entire secret string)
+                    if not self._langsmith_api_key:
+                        self._langsmith_api_key = self.aws_service.get_secret(langsmith_secret_name)
+                # export to process env so downstream libs see it
+                if self._langsmith_api_key:
+                    os.environ["LANGCHAIN_API_KEY"] = self._langsmith_api_key
+            except Exception as e:
+                logger.warning("AWS SM failed (LangSmith key): %s", e)
+
         if not self._jwt_public_key:
             try:
                 raw = self.aws_service.get_secret(secret_name, "jwt_public_key")
@@ -227,6 +256,7 @@ class CredentialManager:
                 logger.warning("AWS SM failed (JWT key): %s", e)
 
         logger.info("    OpenAI API Key loaded: %s", bool(self._openai_api_key))
+        logger.info("    LangSmith API Key loaded: %s", bool(self._langsmith_api_key))
         logger.info("    JWT Public Key loaded: %s", bool(self._jwt_public_key))
         self._loaded = True
 
@@ -236,6 +266,13 @@ class CredentialManager:
         if not self._openai_api_key and retry:
             self.load_credentials(force_reload=True)
         return self._openai_api_key
+
+    def get_langsmith_api_key(self, retry: bool = True) -> Optional[str]:
+        if not self._loaded:
+            self.load_credentials()
+        if not self._langsmith_api_key and retry:
+            self.load_credentials(force_reload=True)
+        return self._langsmith_api_key
 
     def get_jwt_public_key(self, retry: bool = True) -> Optional[str]:
         if not self._loaded:
@@ -280,6 +317,9 @@ def load_credentials(secret_name: Optional[str] = None, force_reload: bool = Fal
 
 def get_openai_api_key(retry: bool = True) -> Optional[str]:
     return _credential_manager.get_openai_api_key(retry)
+
+def get_langsmith_api_key(retry: bool = True) -> Optional[str]:
+    return _credential_manager.get_langsmith_api_key(retry)
 
 def get_jwt_public_key(retry: bool = True) -> Optional[str]:
     return _credential_manager.get_jwt_public_key(retry)
