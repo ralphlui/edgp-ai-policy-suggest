@@ -1,0 +1,2 @@
+{"id": "acc-001", "schema": {"domain": "payments", "card_number": {"type": "string"}, "amount": {"type": "number"}, "currency": {"type": "string"}}, "expected_columns": ["card_number", "amount", "currency"], "prompt": "Generate robust validation rules"}
+{"id": "acc-002", "schema": {"domain": "users", "user_id": {"type": "string"}, "email": {"type": "string"}, "age": {"type": "integer"}}, "expected_columns": ["user_id", "email", "age"], "prompt": "Suggest quality checks for user profile table"}
