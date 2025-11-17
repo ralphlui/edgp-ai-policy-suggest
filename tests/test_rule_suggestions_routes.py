@@ -657,19 +657,18 @@ class TestLoggingAndSanitizationComprehensive:
         mock_logger.error.assert_called_with("TEST_OP failed - domain: test_domain - error: test error message")
 
     @patch('app.api.rule_suggestion_routes.logger')
-    def test_log_duration_context_manager(self, mock_time):
+    @patch('time.time')
+    def test_log_duration_context_manager(self, mock_time, mock_logger):
         """Test duration logging context manager."""
         from app.api.rule_suggestion_routes import log_duration
         
         # Mock time to simulate duration
         mock_time.side_effect = [0.0, 2.5]
         
-        with patch('app.api.rule_suggestion_routes.logger') as mock_logger:
-            with log_duration("test_operation"):
-                pass  # Simulate some work
+        with log_duration("test_operation"):
+            pass  # Simulate some work
         
-            # Should have called info with timing message
-            assert mock_logger.info.called
+        mock_logger.info.assert_called_with(" test_operation took 2.50s")
 
     def test_calculate_overall_confidence(self):
         """Test overall confidence calculation"""
@@ -725,3 +724,49 @@ class TestLoggingAndSanitizationComprehensive:
         
         factors = _get_confidence_factors(mock_state)
         assert isinstance(factors, dict)
+
+
+class TestListDomainsEndpoint:
+    """Test the list domains endpoint."""
+    
+    def test_list_domains_success(self, client, monkeypatch):
+        """Test successful domain listing."""
+        class FakeStore:
+            def get_all_domains_realtime(self, force_refresh=False):
+                return ["customer", "product", "order"]
+        
+        # Import get_store from the right location
+        monkeypatch.setattr("app.vector_db.schema_loader.get_store", lambda: FakeStore())
+        
+        response = client.get("/api/aips/rules/domains")
+        
+        assert response.status_code == 200
+        data = response.json()
+        assert "available_domains" in data
+        assert len(data["available_domains"]) == 3
+        assert "customer" in data["available_domains"]
+
+    def test_list_domains_store_unavailable(self, client, monkeypatch):
+        """Test domain listing when store is unavailable."""
+        monkeypatch.setattr("app.vector_db.schema_loader.get_store", lambda: None)
+        
+        response = client.get("/api/aips/rules/domains")
+        
+        assert response.status_code == 503
+        data = response.json()
+        assert data["error"] == "Vector database not available"
+
+    def test_list_domains_store_error(self, client, monkeypatch):
+        """Test domain listing when store raises an error."""
+        class FakeStore:
+            def get_all_domains_realtime(self, force_refresh=False):
+                raise Exception("Database error")
+        
+        monkeypatch.setattr("app.vector_db.schema_loader.get_store", lambda: FakeStore())
+        
+        response = client.get("/api/aips/rules/domains")
+        
+        assert response.status_code == 500
+        data = response.json()
+        assert data["error"] == "Failed to fetch domains"
+

@@ -301,7 +301,31 @@ app.include_router(domain_schema_router)
 app.include_router(rule_suggestion_router)
 app.include_router(vector_router)
 
-
+# Security testing mode - bypass authentication when DISABLE_AUTH_FOR_TESTING is set
+# WARNING: Only use this in local testing environments!
+if os.getenv("DISABLE_AUTH_FOR_TESTING") == "true":
+    from app.auth.authentication import verify_any_scope_token, UserInfo
+    
+    def mock_auth() -> UserInfo:
+        """Mock authentication for security testing"""
+        mock_payload = {
+            "userEmail": "test@example.com",
+            "sub": "test-user-123",
+            "scope": "manage:policy",
+            "iat": 1700000000,
+            "exp": 9999999999,
+            "orgId": "test-org",
+            "userName": "Test User"
+        }
+        return UserInfo(
+            email="test@example.com",
+            user_id="test-user-123",
+            scopes=["manage:policy"],
+            token_payload=mock_payload
+        )
+    
+    app.dependency_overrides[verify_any_scope_token] = mock_auth
+    logger.warning(" AUTHENTICATION DISABLED FOR TESTING - DO NOT USE IN PRODUCTION!")
 
 if __name__ == "__main__":
     import uvicorn
