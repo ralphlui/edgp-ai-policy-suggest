@@ -221,3 +221,59 @@ def test_fetch_gx_rules_http_exception(monkeypatch):
     rules = rule_tools.fetch_gx_rules.invoke("")
     assert isinstance(rules, list)
     assert any(r.get("rule_name") == "ExpectColumnValuesToBeUnique" for r in rules)
+
+
+def test_normalize_rule_name_empty():
+    # Test line 27 - empty rule_name
+    result = rule_tools._normalize_rule_name("")
+    assert result == ""
+
+
+def test_normalize_rule_name_special_words():
+    # Test lines 73-81 - special word capitalization
+    result = rule_tools._normalize_rule_name("column_id_value")
+    assert "Id" in result
+    
+    result = rule_tools._normalize_rule_name("url_validator")
+    assert "Url" in result
+    
+    result = rule_tools._normalize_rule_name("api_json_uuid")
+    assert "Api" in result and "Json" in result and "Uuid" in result
+
+
+def test_generate_type_specific_fallback_unknown_type():
+    # Test line 625 - default fallback for unknown types
+    result = rule_tools.generate_type_specific_fallback("unknown_col", "weird_type")
+    assert result["column"] == "unknown_col"
+    assert any(e["expectation_type"] == "expect_column_values_to_be_unique" 
+              for e in result["expectations"])
+
+
+def test_normalize_rule_name_word_boundaries():
+    # Test lines 45-64 - regex word boundary patterns
+    result = rule_tools._normalize_rule_name("columnvaluestobeinset")
+    assert "Column" in result and "Values" in result
+    
+    result = rule_tools._normalize_rule_name("valuestobeintype")
+    assert "Values" in result and "Type" in result
+
+
+def test_process_llm_request_validation_exception():
+    # Test lines 671-673 - validation exception fallback
+    from unittest.mock import Mock, MagicMock
+    
+    mock_llm = Mock()
+    mock_response = Mock()
+    mock_response.content = '{"column": "test", "expectations": []}'
+    mock_llm.invoke.return_value = mock_response
+    
+    with patch('app.tools.rule_tools.settings') as mock_settings, \
+         patch('app.validation.middleware.AgentValidationContext') as mock_context_class:
+        
+        # Make validation context raise an exception
+        mock_context_class.return_value.__enter__.side_effect = Exception("Validation failed")
+        mock_settings.get_llm_validation_config.return_value = {"enabled": True}
+        
+        result = rule_tools._process_llm_request(mock_llm, "test prompt")
+        # Should fallback to direct LLM call
+        assert "column" in result or result == '{"column": "test", "expectations": []}'

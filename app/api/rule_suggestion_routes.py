@@ -257,8 +257,8 @@ async def suggest_rules(
         # Log authenticated user information (email is already verified by auth)
         logger.info(f" Suggest rules request from user: {user.email}")
         
-        # 🛡️ GUARDRAILS: Pre-validate input before any LLM processing
-        logger.info(f"🔒 [GUARDRAIL] Starting input validation for domain: '{domain}'")
+        #  GUARDRAILS: Pre-validate input before any LLM processing
+        logger.info(f" [GUARDRAIL] Starting input validation for domain: '{domain}'")
         from app.validation.input_guardrails import InputGuardrails, create_guardrail_response
         from app.vector_db.schema_loader import get_store
         
@@ -268,9 +268,9 @@ async def suggest_rules(
             store = get_store()
             if store:
                 available_domains = store.get_all_domains_realtime(force_refresh=False)
-                logger.info(f"📋 [GUARDRAIL] Retrieved {len(available_domains)} available domains for validation")
+                logger.info(f" [GUARDRAIL] Retrieved {len(available_domains)} available domains for validation")
         except Exception as domain_fetch_error:
-            logger.warning(f"⚠️ [GUARDRAIL] Could not fetch available domains: {domain_fetch_error}")
+            logger.warning(f" [GUARDRAIL] Could not fetch available domains: {domain_fetch_error}")
             # Continue with empty list - will allow more permissive validation
         
         # Run comprehensive guardrail validation
@@ -470,9 +470,9 @@ async def suggest_rules(
                 
                 log_domain_operation("Semantic match found", domain, f"suggested: {suggested_domain}, confidence: {numeric_confidence:.1%}")
                 
-                # 🚀 AUTO-GENERATION: If confidence is 75%+, automatically proceed with rule generation
-                # Lowered to 75% for better user experience with natural language queries
-                if numeric_confidence >= 0.75:
+                #  AUTO-GENERATION: If confidence is 80%+, automatically proceed with rule generation
+                # Lowered to 80% for better user experience with natural language queries
+                if numeric_confidence >= 0.80:
                     log_domain_operation("High confidence match", domain, f"auto-generating rules for {suggested_domain}")
                     
                     # Get the schema for the suggested domain
@@ -509,7 +509,7 @@ async def suggest_rules(
                                     result = graph.invoke(initial_state)
                                 
                                 processing_time = round(time.time() - request_start_time, 2)
-                                logger.info(f"🎯 [AUTO-SUGGEST] Automatic rule generation completed in {processing_time}s")
+                                logger.info(f" [AUTO-SUGGEST] Automatic rule generation completed in {processing_time}s")
                                 
                                 # Store successful policy if confidence is high
                                 if isinstance(result, dict):
@@ -599,7 +599,7 @@ async def suggest_rules(
                         log_error("Auto-generation for suggested domain", suggested_domain, e)
                         # Fall through to suggestion mode if auto-generation fails
                 
-                # If confidence < 75% or auto-generation failed, show suggestion
+                # If confidence < 80% or auto-generation failed, show suggestion
                 return JSONResponse({
                     "error": "Domain not found exactly",
                     "alert": {

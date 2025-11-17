@@ -325,8 +325,8 @@ class AgentValidationContext:
     
     def __enter__(self):
         # Enhanced context entry logging
-        self.logger.info(f"🚀 Starting agent validation session for user {self.user_id}")
-        self.logger.debug(f"📅 Session started at: {self.session_start.isoformat()}")
+        self.logger.info(f" Starting agent validation session for user {self.user_id}")
+        self.logger.debug(f" Session started at: {self.session_start.isoformat()}")
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -334,7 +334,7 @@ class AgentValidationContext:
         session_duration = (datetime.now(dt.timezone.utc) - self.session_start).total_seconds()
         
         if exc_type:
-            self.logger.error(f"🔥 Validation session ended with exception: {exc_type.__name__}: {exc_val}")
+            self.logger.error(f" Validation session ended with exception: {exc_type.__name__}: {exc_val}")
         
         # Comprehensive session summary
         total_validations = len(self.validation_log)

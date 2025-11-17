@@ -1,3 +1,4 @@
+import os
 import types
 from datetime import datetime
 
@@ -174,4 +175,17 @@ def test_status_top_level_exception_returns_500(app_with_aoss_router):
         assert data["validation_status"] == "error"
 
 
+def test_status_no_env_set(app_with_aoss_router):
+    """Test AOSS status when no environment variables are set"""
+    app = app_with_aoss_router
+    test_client = TestClient(app)
     
+    with patch.dict(os.environ, {}, clear=True):
+        with patch("app.api.aoss_routes.OpenSearchColumnStore", side_effect=Exception("No env")):
+            # Reset the global store
+            aoss_routes._store = None
+            
+            response = test_client.get("/api/aips/vector/status")
+            assert response.status_code in [500, 503]  # Accept both error codes
+            data = response.json()
+            assert data["status"] in ["unavailable", "error"]

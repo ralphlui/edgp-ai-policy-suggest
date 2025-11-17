@@ -94,7 +94,7 @@ class InputGuardrails:
             Tuple of (is_valid, message)
         """
         if not domain_input or not available_domains:
-            self.logger.warning("⚠️ [DOMAIN] Empty domain input or no available domains")
+            self.logger.warning(" [DOMAIN] Empty domain input or no available domains")
             return GuardrailViolation(
                 violation_type=GuardrailViolationType.INVALID_DOMAIN,
                 message="Domain name is required",
@@ -244,7 +244,7 @@ class InputGuardrails:
         
         for pattern, description, violation_category in harmful_instruction_patterns:
             if re.search(pattern, content):
-                self.logger.error(f"🚨 [SECURITY] Harmful intent detected: {violation_category}")
+                self.logger.error(f" [SECURITY] Harmful intent detected: {violation_category}")
                 violations.append(GuardrailViolation(
                     violation_type=GuardrailViolationType.UNSAFE_CONTENT,
                     message=f"Request contains instructions for illegal/harmful activities: {description}",
@@ -264,7 +264,7 @@ class InputGuardrails:
         
         for pattern, description, violation_category in bypass_patterns:
             if re.search(pattern, content):
-                self.logger.warning(f"⚠️ [SECURITY] Bypass attempt detected: {violation_category}")
+                self.logger.warning(f" [SECURITY] Bypass attempt detected: {violation_category}")
                 violations.append(GuardrailViolation(
                     violation_type=GuardrailViolationType.UNSAFE_CONTENT,
                     message=f"Content appears to be attempting to bypass safety measures: {description}",
@@ -316,7 +316,7 @@ class InputGuardrails:
         for pattern_name, pattern in self.injection_patterns.items():
             matches = re.findall(pattern, content)
             if matches:
-                self.logger.warning(f"❌ [GUARDRAIL] Injection attempt detected: {pattern_name}")
+                self.logger.warning(f" [GUARDRAIL] Injection attempt detected: {pattern_name}")
                 violations.append(GuardrailViolation(
                     violation_type=GuardrailViolationType.INJECTION_ATTEMPT,
                     message=f"Content appears to contain {pattern_name.replace('_', ' ')} attempt",
@@ -329,7 +329,7 @@ class InputGuardrails:
         for pattern_name, pattern in self.spam_patterns.items():
             matches = re.findall(pattern, content)
             if matches:
-                self.logger.warning(f"❌ [GUARDRAIL] Spam pattern detected: {pattern_name}")
+                self.logger.warning(f" [GUARDRAIL] Spam pattern detected: {pattern_name}")
                 violations.append(GuardrailViolation(
                     violation_type=GuardrailViolationType.SPAM_PATTERN,
                     message=f"Content contains suspicious {pattern_name.replace('_', ' ')} pattern",
@@ -339,12 +339,12 @@ class InputGuardrails:
                 ))
         
         if violations:
-            self.logger.warning(f"❌ [GUARDRAIL] Found {len(violations)} content safety violations")
+            self.logger.warning(f" [GUARDRAIL] Found {len(violations)} content safety violations")
             # Log summary of violation types for monitoring
             violation_types = [v.detected_pattern for v in violations if v.detected_pattern]
             self.logger.warning(f"   Violation types: {', '.join(set(violation_types))}")
         else:
-            self.logger.info(f"✅ [GUARDRAIL] Content passed all safety checks")
+            self.logger.info(f" [GUARDRAIL] Content passed all safety checks")
         
         return violations
     
